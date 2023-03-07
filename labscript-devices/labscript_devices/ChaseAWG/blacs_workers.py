@@ -16,12 +16,7 @@ import h5py
 from blacs.tab_base_classes import Worker
 import labscript_utils.properties as properties
 import os
-
-class ChaseAWGWorker(Worker):
-    def init(self):
-        pass
-
-    def awg_pulse_generator(self, pulse_list_1 = None, pulse_list_2 = None):
+def awg_pulse_generator(pulse_list_1 = None, pulse_list_2 = None):
         #pulse_list_1 = [ (NumPoints_1, NumLoops_1, '2047.5 + 2047.5*sin( 2.0*pi* x/(32) )' ), (NumPoints_2, NumLoops_2, 2047.5 + 2047.5*sin( 2.0*pi* x/(64) ) )     ]
         s_1 = '#include <iostream>\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n#include "dax22000_lib_DLL32.h"\n'
         s_2 = 'typedef struct {PVOID SegmentPtr; DWORD NumPoints; DWORD NumLoops; DWORD TrigEn;} SegmentStruct; int main(int argc, char** argv){DWORD NumCards = 0;DWORD CardNum = 1;DWORD Chan = 1;int x;double Actual_Frequency; double pi = 3.14159265358979;'
@@ -77,8 +72,14 @@ class ChaseAWGWorker(Worker):
 
         print(f.read())
         f.close()
+        #print(os.getcwd())
         os.system('g++ -o send_pulse.exe send_pulse.cpp ftd2xx.dll dax22000_lib_DLL32.dll')
-        #os.startfile("C:Users/nateu/Yao Group/send_pulse.exe")
+        os.startfile("C:Users/nateu/send_pulse.exe")
+class ChaseAWGWorker(Worker):
+    def init(self):
+        pass
+
+    
     def program_manual(self, front_panel_values):
         return front_panel_values 
 
@@ -88,18 +89,20 @@ class ChaseAWGWorker(Worker):
         with h5py.File(h5file,'r') as h5_file:
             group = h5_file['devices/%s'%device_name]
             DDS = group['DDS']
-
+            self.logger.info(DDS[0])
             for i in range(len(DDS[0])):
                 if int(DDS[0][i]) == 1:
                     pulse_list_1.append( ( int(DDS[1][i]), int(DDS[2][i]), DDS[3][i].decode('utf-8')))
                 else: 
                     pulse_list_2.append( (int(DDS[1][i]), int(DDS[2][i]), DDS[3][i].decode('utf-8')))
 
-                
         self.logger.info(pulse_list_1)
         self.logger.info(pulse_list_2)
-
-        self.awg_pulse_generator(pulse_list_1, pulse_list_2)
+        if len(pulse_list_1) == 0:
+            pulse_list_1 = None
+        elif len(pulse_list_2) == 0:
+            pulse_list_2 = None
+        awg_pulse_generator(pulse_list_1, pulse_list_2)
         return initial_values
 
     def transition_to_manual(self,abort = False):
