@@ -11,6 +11,7 @@
 #                                                                   #
 #####################################################################
 import sys
+import os
 import time
 import threading
 from PyDAQmx import *
@@ -678,6 +679,7 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
         self.counter_task_running = False
         self.counter_daqlock = threading.Condition()
         # Channel details
+        self.sample_freq = 0
         self.counter_channels = []
 
         self.counter_h5_file = "" 
@@ -720,7 +722,6 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
 
             for i, chnl in enumerate(counter_chnl_list):
                 # self.logger.info(["counter chnl list", i, counter_chnl_list[i]])
-                
                 if self.counter_task[i]:
                     self.logger.info("clearing tasks")
                     self.counter_task[i].ClearTask()
@@ -730,36 +731,54 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
                 samps_per_chan = 0
                 max_samps_per_chan = 0
                 sample_freq = self.counter_sample_freqs[chnl][0] #TODO ensure counter_sample_freqs[chnl] list contains only one number, because we cannot change the sample freq for different measurements during the shot
-                for j in range(len(self.start_time[chnl])):
-                    samps_per_chan += int(np.floor((self.end_time[chnl][j]-self.start_time[chnl][j])*sample_freq))
-                    if int(np.floor((self.end_time[chnl][j]-self.start_time[chnl][j])*sample_freq)) > max_samps_per_chan:
-                        max_samps_per_chan = int(np.floor((self.end_time[chnl][j]-self.start_time[chnl][j])*sample_freq))
+                self.sample_freq = sample_freq
+
                     # self.logger.info(["samps per chan", j, samps_per_chan, ' max samps per chan ', max_samps_per_chan])
-                self.counter_data[i] = np.zeros(samps_per_chan, dtype=np.float64) # ejd 11/18
+                if sample_freq < 1e6:
+                    for j in range(len(self.start_time[chnl])):
+                        samps_temp = int(np.floor((self.end_time[chnl][j]-self.start_time[chnl][j])*sample_freq))
+                        samps_per_chan += samps_temp
+                        #self.logger.info(samps_per_chan)
+                        if samps_temp > max_samps_per_chan:
+                            max_samps_per_chan = samps_temp
+                    self.counter_data[i] = np.zeros(samps_per_chan, dtype=np.float64) # ejd 11/18
 
-                ## ejd old ## 
-                # self.pulser[i] = Task()
-                # self.pulser[i].CreateCOPulseChanFreq("/Dev1/ctr1", '', DAQmx_Val_Hz, DAQmx_Val_Low, 0, sample_freq, 0.5)
-                # self.pulser[i].CfgImplicitTiming(DAQmx_Val_FiniteSamps, samps_per_chan)
-                # if self.counter_buffered:
-                #     self.pulser[i].CfgDigEdgeStartTrig('/'+trig_chnl_list[i], DAQmx_Val_Rising)
-                ## ejd new ##
-                self.pulser[i] = Task()
-                self.pulser[i].CreateCOPulseChanFreq("/Dev1/ctr1", '', DAQmx_Val_Hz, DAQmx_Val_Low, 0, sample_freq, 0.5) # TODO ejd does "/Dev1/ctr1" need to be a variable? ejd
-                self.pulser[i].CfgImplicitTiming(DAQmx_Val_FiniteSamps, max_samps_per_chan) # TODO ejd this could be buggy...maybe should just require that all acquisitions are same length?
-                if self.counter_buffered:
-                    self.pulser[i].CfgDigEdgeStartTrig('/'+trig_chnl_list[i], DAQmx_Val_Rising) # does /Dev1/PFI4 need to be a variable? ejd
-                    self.pulser[i].SetStartTrigRetriggerable(1)
+                    ## ejd old ## 
+                    # self.pulser[i] = Task()
+                    # self.pulser[i].CreateCOPulseChanFreq("/Dev1/ctr1", '', DAQmx_Val_Hz, DAQmx_Val_Low, 0, sample_freq, 0.5)
+                    # self.pulser[i].CfgImplicitTiming(DAQmx_Val_FiniteSamps, samps_per_chan)
+                    # if self.counter_buffered:
+                    #     self.pulser[i].CfgDigEdgeStartTrig('/'+trig_chnl_list[i], DAQmx_Val_Rising)
+                    ## ejd new ##
+                    self.pulser[i] = Task()
+                    self.pulser[i].CreateCOPulseChanFreq("/Dev2/ctr1", '', DAQmx_Val_Hz, DAQmx_Val_Low, 0, sample_freq, 0.5) # TODO ejd does "/Dev1/ctr1" need to be a variable? ejd
+                    self.pulser[i].CfgImplicitTiming(DAQmx_Val_FiniteSamps, max_samps_per_chan) # TODO ejd this could be buggy...maybe should just require that all acquisitions are same length?
+                    if self.counter_buffered:
+                        self.pulser[i].CfgDigEdgeStartTrig('/'+trig_chnl_list[i], DAQmx_Val_Rising) # does /Dev1/PFI4 need to be a variable? ejd
+                        self.pulser[i].SetStartTrigRetriggerable(1)
 
 
-                self.counter_task[i] = Task()
-                self.logger.info(["Task", i, self.counter_task[i]])
-                self.counter_task[i].CreateCICountEdgesChan('/' + counter_chnl_list[i], '', DAQmx_Val_Rising, 0, DAQmx_Val_CountUp) 
-                self.counter_task[i].CfgSampClkTiming('/'+CPT_chnl_list[i], sample_freq, DAQmx_Val_Rising, DAQmx_Val_FiniteSamps, samps_per_chan)
+                    self.counter_task[i] = Task()
+                    #self.logger.info(["Task", i, self.counter_task[i]])
+                    self.counter_task[i].CreateCICountEdgesChan('/' + counter_chnl_list[i], '', DAQmx_Val_Rising, 0, DAQmx_Val_CountUp) 
+                    self.counter_task[i].CfgSampClkTiming('/'+CPT_chnl_list[i], sample_freq, DAQmx_Val_Rising, DAQmx_Val_FiniteSamps, samps_per_chan)
+                else:
+                    #self.logger.info(self.numIterations)
+                    self.counter_data[i] = np.zeros(int(4*self.numIterations + 2))
+                    self.counter_task[i] = Task()
+                    #self.logger.info(["Task", i, self.counter_task[i]])
+                    self.counter_task[i].CreateCICountEdgesChan('/' + counter_chnl_list[i], '', DAQmx_Val_Rising, 0, DAQmx_Val_CountUp)
+                    self.counter_task[i].SetCICountEdgesTerm('/' + counter_chnl_list[i], '/'+CPT_chnl_list[i])
+                    self.counter_task[i].SetPauseTrigType(DAQmx_Val_DigLvl)
+                    self.counter_task[i].SetDigLvlPauseTrigSrc('/'+trig_chnl_list[i])
+                    self.counter_task[i].SetDigLvlPauseTrigWhen(DAQmx_Val_Low) 
+                    self.counter_task[i].CfgSampClkTiming('/'+trig_chnl_list[i], sample_freq, DAQmx_Val_Rising, DAQmx_Val_FiniteSamps, int(4*self.numIterations + 2))
+                #self.logger.info(CPT_chnl_list[i])
                 self.counter_task_running = True
 
                 self.counter_task[i].StartTask()
-                self.pulser[i].StartTask()
+                if sample_freq < 1e6:
+                    self.pulser[i].StartTask()
 
                 #raise LabscriptError(self.counter_data[i])
 #            self.pulser[i].RegisterDoneEvent(0, DAQmxDoneEventCallbackPtr callbackFunction, void *callbackData);
@@ -776,20 +795,19 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
             self.logger.info('stop_task got daqlock')
             if self.counter_task_running:
                 for i in range(len(self.counter_buffered_channels)): 
-                    self.logger.info(["len(self.counter_buffered_channels", i, len(self.counter_buffered_channels)])
+                    #self.logger.info(["len(self.counter_buffered_channels", i, len(self.counter_buffered_channels)])
                     self.counter_task[i].ReadCounterF64(DAQmx_Val_Auto, -1, self.counter_data[i], self.counter_data[i].size, self.counter_read[i], None)
-                    # self.logger.info(['b counter data', i, self.counter_data[i]])                
+                    #self.logger.info(["READ COUNTER"])
                     #self.logger.info(len(self.counter_data[i]))
-                    #raise LabscriptError("ASDS")
                     self.counter_task[i].StopTask()
                     self.counter_task[i].ClearTask()
-                    self.pulser[i].StopTask()
-                    self.pulser[i].ClearTask()
+                    if self.sample_freq < 1e6:
+                        self.pulser[i].StopTask()
+                        self.pulser[i].ClearTask()
                     self.counter_task_running = False #ejd 11/18 added
 
             self.counter_daqlock.notify()
         self.logger.debug('finished stop_task')
-        
     def transition_to_buffered(self, device_name, h5file, initial_values, fresh):
         # TODO: Do this line better!
         self.logger.debug('transitioning to buffer')
@@ -830,22 +848,27 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
             # try:
             counter_acquisitions = hdf5_file['/devices/'+device_name+'/COUNTER_ACQUISITIONS']
             self.numIterations = int(counter_acquisitions[0][-1])
-            # self.logger.info(['self.numIterations ', self.numIterations])
-            for j, chnl in enumerate([counter_acquisitions[i][0] for i in range(len(counter_acquisitions))]):
-                chnl = chnl.decode("utf-8")
-                # self.logger.info(['device name ', device_name, ' chanl ', chnl])
-                if device_name+'/'+chnl not in self.start_time:
-                    self.start_time[device_name+'/'+chnl] = [float(counter_acquisitions[j][4])]
-                    self.end_time[device_name+'/'+chnl] = [float(counter_acquisitions[j][5])]
-                    self.counter_sample_freqs[device_name+'/'+chnl] = [float(counter_acquisitions[j][6])]
-                else:
-                    self.start_time[device_name+'/'+chnl].append(float(counter_acquisitions[j][4]))# = [float(counter_acquisitions[i][4]) for i in range(len(counter_acquisitions))] # changed to dict ejd
-                    self.end_time[device_name+'/'+chnl].append(float(counter_acquisitions[j][5]))#= [float(counter_acquisitions[i][5]) for i in range(len(counter_acquisitions))] #changed to dict ejd
-                    self.counter_sample_freqs[device_name+'/'+chnl].append(float(counter_acquisitions[j][6])) #= [float(counter_acquisitions[i][6]) for i in range(len(counter_acquisitions))]  #changed to dict ejd
-                # self.logger.info([self.start_time, self.end_time, self.counter_sample_freqs])
-            for chnl in h5_count_chnls:
-                if not all(element == self.counter_sample_freqs[chnl][0] for element in self.counter_sample_freqs[chnl]):
-                    self.logger.debug('WARNING COUNTER SAMPLE FREQ NEEDS TO BE THE SAME FOR ALL ACQUISITIONS ON A SINGLE COUNTER DURING THE SHOT!') #TODO ejd labscript error, also possibly TODO ejd check what happens if all acquisitions are not the same length? raise LabscriptError()
+            if len(counter_acquisitions) > 1:
+                # self.logger.info(['self.numIterations ', self.numIterations])
+                for j, chnl in enumerate([counter_acquisitions[i][0] for i in range(len(counter_acquisitions))]):
+                    chnl = chnl.decode("utf-8")
+                    # self.logger.info(['device name ', device_name, ' chanl ', chnl])
+                    if device_name+'/'+chnl not in self.start_time:
+                        self.start_time[device_name+'/'+chnl] = [float(counter_acquisitions[j][4])]
+                        self.end_time[device_name+'/'+chnl] = [float(counter_acquisitions[j][5])]
+                        self.counter_sample_freqs[device_name+'/'+chnl] = [float(counter_acquisitions[j][6])]
+                    else:
+                        self.start_time[device_name+'/'+chnl].append(float(counter_acquisitions[j][4]))# = [float(counter_acquisitions[i][4]) for i in range(len(counter_acquisitions))] # changed to dict ejd
+                        self.end_time[device_name+'/'+chnl].append(float(counter_acquisitions[j][5]))#= [float(counter_acquisitions[i][5]) for i in range(len(counter_acquisitions))] #changed to dict ejd
+                        self.counter_sample_freqs[device_name+'/'+chnl].append(float(counter_acquisitions[j][6])) #= [float(counter_acquisitions[i][6]) for i in range(len(counter_acquisitions))]  #changed to dict ejd
+                    # self.logger.info([self.start_time, self.end_time, self.counter_sample_freqs])
+                for chnl in h5_count_chnls:
+                    if not all(element == self.counter_sample_freqs[chnl][0] for element in self.counter_sample_freqs[chnl]):
+                        self.logger.debug('WARNING COUNTER SAMPLE FREQ NEEDS TO BE THE SAME FOR ALL ACQUISITIONS ON A SINGLE COUNTER DURING THE SHOT!') #TODO ejd labscript error, also possibly TODO ejd check what happens if all acquisitions are not the same length? raise LabscriptError()
+            else:
+                for j, chnl in enumerate([counter_acquisitions[i][0] for i in range(len(counter_acquisitions))]):
+                    chnl = chnl.decode("utf-8")
+                    self.counter_sample_freqs[device_name+'/'+chnl] = [float(counter_acquisitions[0][3])]
             ## ejd 11/18 replacement end              
             # except:
             #     # No acquisitions!
@@ -866,6 +889,7 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
         self.CPT_buffered_channels = h5_CPT_chnls ## use set here?! Multiple counters could use same CPT counter. ##EE2
         self.trig_buffered_channels = h5_trig_chnls ## use set here?! Multiple counters could use same CPT counter. ##EE2
         self.counter_buffered = True 
+        #self.logger.info(self.trig_buffered_channels)
 
         self.counter_task = [None]*len(h5_count_chnls) ##EE2
         self.pulser = [None]*len(h5_count_chnls) ##EE2
@@ -934,28 +958,49 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
                 # No acquisitions!
                 return
             try:
-                counter_measurements = hdf5_file['/data/counter']
+                counter_measurements = hdf5_file['/data'] 
             except:
                 # Group doesn't exist yet, create it: TODO NEED TO EDIT IF >1 Counter Channel
-                counter_measurements = hdf5_file.create_group('/data/counter')
-            counter_measurements.create_dataset('allCounterData', data=self.counter_data)
+                counter_measurements = hdf5_file.create_group('/data')
+            #counter_measurements.create_dataset('allCounterData', data=self.counter_data)
+            #self.logger.info(["THE data", self.counter_data, len(counter_acquisitions)])
             counter_index = 0
             indStart = 0
             indEnd = 0
             # for counter_connection,counter_label,counter_start_time,counter_end_time,sample_freq,counter_wait_label,counter_scale_factor,counter_units in counter_acquisitions: # original but wrong ejd
-            for counter_connection,counter_CPT_connection,counter_trigger,counter_label,counter_start_time,counter_end_time, counter_sample_freq, counter_wait_label, numIter in counter_acquisitions: #TODO this won't work if more than one counter channel ejd
-                num_samps = int(np.floor((counter_end_time-counter_start_time)*counter_sample_freq))
-                # self.logger.info(['num sampps', num_samps, ' counter end time ', counter_end_time, ' counter start time ', counter_start_time, ' counter sample freq ', counter_sample_freq])
+            if self.sample_freq < 1e6:
+                simplified_counter_data = np.zeros(len(counter_acquisitions)) #added by KP 4/13/23
 
-                counter_label = _ensure_str(counter_label)
-                counter_label = counter_label + '_' + str(counter_index)
-                indEnd += num_samps
-                # self.logger.info(self.counter_data[0])
-                # self.logger.info(self.counter_data[0][indStart:indEnd])
-                # counter_measurements.create_dataset(counter_label, data=self.counter_data) #ejd original
-                counter_measurements.create_dataset(counter_label, data=self.counter_data[0][indStart:indEnd])
-                indStart = indEnd
-                counter_index += 1
+                for counter_connection,counter_CPT_connection,counter_trigger,counter_label,counter_start_time,counter_end_time, counter_sample_freq, counter_wait_label, numIter in counter_acquisitions: #TODO this won't work if more than one counter channel ejd
+                    num_samps = int(np.floor((counter_end_time-counter_start_time)*counter_sample_freq))
+                    # self.logger.info(['num sampps', num_samps, ' counter end time ', counter_end_time, ' counter start time ', counter_start_time, ' counter sample freq ', counter_sample_freq])
+
+                    counter_label = _ensure_str(counter_label)
+                    counter_label = counter_label + '_' + str(counter_index)
+                    indEnd += num_samps
+                    simplified_counter_data[counter_index] = self.counter_data[0][indEnd-1] - self.counter_data[0][indStart]
+    
+                    # self.logger.info(self.counter_data[0])
+                    # self.logger.info(self.counter_data[0][indStart:indEnd])
+                    # counter_measurements.create_dataset(counter_label, data=self.counter_data) #ejd original
+
+                    #counter_measurements.create_dataset(counter_label, data=self.counter_data[0][indStart:indEnd])
+                    indStart = indEnd  
+                    counter_index += 1
+            
+                counter_measurements.create_dataset('counter_data', data = simplified_counter_data)
+   
+            else:
+                #self.logger.info(self.numIterations)
+                reference_counter_data = np.zeros(self.numIterations)
+                signal_counter_data = np.zeros(self.numIterations)
+                for i in range(self.numIterations): #TODO this won't work if more than one counter channel ejd
+                    reference_counter_data[i], signal_counter_data[i] = self.counter_data[0][3 + 4*i] - self.counter_data[0][1 + 4*i], self.counter_data[0][5+ 4*i] - self.counter_data[0][3 + 4*i]
+                #self.logger.info(self.counter_h5_file)
+                file_name = os.path.basename(self.counter_h5_file)[0:-3]
+                np.savetxt(os.path.dirname(self.counter_h5_file ) +'/counter_data_' +file_name + '.txt', np.transpose([reference_counter_data, signal_counter_data]) )
+                #counter_measurements.create_dataset('reference_data', data = reference_counter_data)
+                #counter_measurements.create_dataset('signal_data', data = signal_counter_data)
     def abort_buffered(self):
         #TODO: test this
         return self.transition_to_manual(True)

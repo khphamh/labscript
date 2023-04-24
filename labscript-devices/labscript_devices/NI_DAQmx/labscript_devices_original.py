@@ -11,7 +11,7 @@
 #                                                                   #
 #####################################################################
 
-__version__ = '1.1.0'
+__version__ = '1.2.0'
 
 
 from labscript import (
@@ -21,7 +21,6 @@ from labscript import (
     StaticAnalogOut,
     StaticDigitalOut,
     AnalogIn,
-    CounterIn,
     bitfield,
     config,
     compiler,
@@ -59,11 +58,14 @@ class NI_DAQmx(IntermediateDevice):
                 "static_AO",
                 "static_DO",
                 "clock_mirror_terminal",
+                "connected_terminals",
                 "AI_range",
                 "AI_start_delay",
                 "AI_start_delay_ticks",
                 "AI_term",
                 "AI_chans",
+                "AI_timebase_terminal",
+                "AI_timebase_rate",
                 "AO_range",
                 "max_AI_multi_chan_rate",
                 "max_AI_single_chan_rate",
@@ -94,6 +96,7 @@ class NI_DAQmx(IntermediateDevice):
         static_AO=None,
         static_DO=None,
         clock_mirror_terminal=None,
+        connected_terminals=None,
         acquisition_rate=None,
         AI_range=None,
         AI_range_Diff=None,
@@ -101,6 +104,8 @@ class NI_DAQmx(IntermediateDevice):
         AI_start_delay_ticks=None,
         AI_term='RSE',
         AI_term_cfg=None,
+        AI_timebase_terminal=None,
+        AI_timebase_rate=None,
         AO_range=None,
         max_AI_multi_chan_rate=None,
         max_AI_single_chan_rate=None,
@@ -118,8 +123,10 @@ class NI_DAQmx(IntermediateDevice):
         **kwargs
     ):
         """Generic class for NI_DAQmx devices.
+
         Generally over-ridden by device-specific subclasses that contain
         the introspected default values.
+
         Args:
             name (str): name to assign to the created labscript device
             parent_device (clockline): Parent clockline device that will
@@ -131,6 +138,9 @@ class NI_DAQmx(IntermediateDevice):
             clock_mirror_terminal (str, optional): Channel string of digital output
                 that mirrors the input clock. Useful for daisy-chaning DAQs on the same
                 clockline.
+            connected_terminals (list, optional): List of pairs of strings of digital inputs
+                and digital outputs that will be connected. Useful for daisy-chaining DAQs
+                on the same clockline when they do not have direct routes (see Device Routes in NI MAX).
             acquisiton_rate (float, optional): Default sample rate of inputs.
             AI_range (iterable, optional): A `[Vmin, Vmax]` pair that sets the analog
                 input voltage range for all analog inputs.
@@ -148,6 +158,12 @@ class NI_DAQmx(IntermediateDevice):
             AI_term_cfg (dict, optional): Dictionary of analog input channels and their
                 supported terminations. Best to use `get_capabilities.py` to introspect
                 these.
+            AI_timebase_terminal (str, optional): Channel string that specifies what
+                channel to use for the Sample Clock Timebase signal.
+                If None, use default internal clocks.
+                Must also specify the rate when not using the internal sources.
+            AI_timebase_rate (float, optional): Supplied clock frequency for the AI timebase.
+                Only specify if using an external clock source.
             AO_range (iterable, optional): A `[Vmin, Vmax]` pair that sets the analog
                 output voltage range for all analog outputs.
             max_AI_multi_chan_rate (float, optional): Max supported analog input 
@@ -171,6 +187,7 @@ class NI_DAQmx(IntermediateDevice):
                 buffered output
             supports_semiperiod_measurement (bool, optional): True if device supports
                 semi-period measurements
+
         """
 
         # Default static output setting based on whether the device supports buffered
@@ -243,6 +260,13 @@ class NI_DAQmx(IntermediateDevice):
             # no analog inputs
             self.AI_chans = []
             self.start_delay_ticks = None
+        # special AI timebase handling
+        if num_AI > 0:
+            if (AI_timebase_rate is None) ^ (AI_timebase_terminal is None):
+                raise LabscriptError("You must specify terminal and rate when using an external AI timebase")
+            self.AI_timebase_terminal = AI_timebase_terminal
+            self.AI_timebease_rate = AI_timebase_rate
+                
         self.num_AO = num_AO
         self.num_CI = num_CI
         self.ports = ports if ports is not None else {}
@@ -266,7 +290,7 @@ class NI_DAQmx(IntermediateDevice):
 
         self.wait_monitor_minimum_pulse_width = self.min_semiperiod_measurement
 
-        self.allowed_children = [CounterIn]
+        self.allowed_children = []
         '''Sets the allowed children types based on the capabilites.'''
         if self.num_AI > 0:
             self.allowed_children += [AnalogIn]
@@ -296,6 +320,7 @@ class NI_DAQmx(IntermediateDevice):
 
     def add_device(self, device):
         """Error checking for adding a child device.
+
         Args:
             device (labscript device): Child labscript device to
                 attach to this device. Only types of devices in :obj:`allowed_children`
@@ -341,7 +366,6 @@ class NI_DAQmx(IntermediateDevice):
                 msg = """Cannot add DigitalOut port '%s', which does not support
                     buffered output"""
                 raise ValueError(dedent(msg) % port_str)
-        '''
         elif isinstance(device, AnalogIn):
             if device.connection not in self.AI_chans:
                 msg = """Cannot add analog input with connection string '%s' to device
@@ -358,7 +382,7 @@ class NI_DAQmx(IntermediateDevice):
                     to trigger the start of acquisition. Please specify a parent_device
                     and clock_terminal for device %s"""
                 raise ValueError(dedent(msg) % self.name)
-        '''
+
         IntermediateDevice.add_device(self, device)
 
     def _check_even_children(self, analogs, digitals):
@@ -501,50 +525,6 @@ class NI_DAQmx(IntermediateDevice):
 
         return acquisition_table
 
-    def _make_counter_input_table(self, inputs): #EE8
-        """Collect counter input instructions and create the acquisition table"""
-        if not inputs:
-            return None
-        acquisitions = []
-        for connection, input in inputs.items():
-            for acq in input.acquisitions:
-                acquisitions.append(
-                    (
-                        connection,
-                        acq['label'],
-                        acq['start_time'],
-                        acq['end_time'],
-                        acq['wait_label'],
-                        acq['scale_factor'],
-                        acq['units'],
-                    )
-                )
-        if acquisitions and compiler.wait_table and compiler.wait_monitor is None:
-            msg = """Cannot do analog input on an NI DAQmx device in an experiment that
-                uses waits without a wait monitor. This is because input data cannot be
-                'chunked' into requested segments without knowledge of the durations of
-                the waits. See labscript.WaitMonitor for details."""
-            raise LabscriptError(dedent(msg))
-
-        # The 'a256' dtype below limits the string fields to 256
-        # characters. Can't imagine this would be an issue, but to not
-        # specify the string length (using dtype=str) causes the strings
-        # to all come out empty.
-        acquisitions_table_dtypes = [
-            ('connection', 'a256'),
-            ('label', 'a256'),
-            ('start', float),
-            ('stop', float),
-            ('wait label', 'a256'),
-            ('scale factor', float),
-            ('units', 'a256'),
-        ]
-        acquisition_table = np.empty(len(acquisitions), dtype=acquisitions_table_dtypes)
-        for i, acq in enumerate(acquisitions):
-            acquisition_table[i] = acq
-
-        return acquisition_table
-
     def _check_wait_monitor_timeout_device_config(self):
         """Check that if we are the wait monitor acquisition device and another device
         is the wait monitor timeout device, that a) the other device is a DAQmx device
@@ -593,7 +573,9 @@ class NI_DAQmx(IntermediateDevice):
     def generate_code(self, hdf5_file):
         """Generates the hardware code from the script and saves it to the
         shot h5 file.
+
         This is called automatically when a shot is compiled.
+
         Args:
             hdf5_file (str): Path to shot's hdf5 file to save the instructions to.
         """
@@ -601,7 +583,6 @@ class NI_DAQmx(IntermediateDevice):
         analogs = {}
         digitals = {}
         inputs = {}
-        counter_inputs = {}
         for device in self.child_devices:
             if isinstance(device, (AnalogOut, StaticAnalogOut)):
                 analogs[device.connection] = device
@@ -609,8 +590,6 @@ class NI_DAQmx(IntermediateDevice):
                 digitals[device.connection] = device
             elif isinstance(device, AnalogIn):
                 inputs[device.connection] = device
-            elif isinstance(device, CounterIn):
-                counter_inputs[device.connection] = device
             else:
                 raise TypeError(device)
 
@@ -627,45 +606,10 @@ class NI_DAQmx(IntermediateDevice):
 
         self._check_even_children(analogs, digitals)
         self._check_bounds(analogs)
+
         AO_table = self._make_analog_out_table(analogs, times)
         DO_table = self._make_digital_out_table(digitals, times)
         AI_table = self._make_analog_input_table(inputs)
-        # CI_table = self._make_counter_input_table(inputs)  #EE8
-        #print(counter_inputs)
-        counter_connections = list(counter_inputs.keys())
-        #print('counter_connections', counter_connections)
-        counter_connections.sort()
-        counter_attrs = []
-        CPT_attrs = [] ##EE2
-        trig_attrs = [] ##EE2
-        counter_acquisitions = []
-        for connection in counter_connections:
-            # print(['testing num iterations ', counter_inputs[connection].numIterations])
-            counter_attrs.append(self.MAX_name+'/'+connection)
-            # print('counter_inputs[connection].CPT_connection', counter_inputs[connection].CPT_connection)
-            CPT_attrs.append(self.MAX_name+'/'+counter_inputs[connection].CPT_connection) ##EE2
-            trig_attrs.append(self.MAX_name+'/'+counter_inputs[connection].trigger) ##EE2
-            #print(counter_inputs[connection].acquisitions)
-            if len(counter_inputs[connection].acquisitions) > 1:
-                for acq in counter_inputs[connection].acquisitions:
-                    counter_acquisitions.append((connection,counter_inputs[connection].CPT_connection,counter_inputs[connection].trigger,acq['label'],acq['start_time'],acq['end_time'],acq['sample_freq'],acq['wait_label'],counter_inputs[connection].numIterations))
-            else:
-                for acq in counter_inputs[connection].acquisitions:
-                    counter_acquisitions.append((connection,counter_inputs[connection].CPT_connection,counter_inputs[connection].trigger,acq['sample_freq'],counter_inputs[connection].numIterations) )
-            #print('counter_acquisitions', counter_acquisitions)
-        # The 'a256' dtype below limits the string fields to 256
-        # characters. Can't imagine this would be an issue, but to not
-        # specify the string length (using dtype=str) causes the strings
-        # to all come out empty.
-        if len(counter_acquisitions) < 9:
-            counter_acquisitions_table_dtypes = [('connection','a256'),('CPT_connection','a256'), ('trigger','a256'), ('sample freq',float), ('numIterations',int)]
-        else:
-            counter_acquisitions_table_dtypes = [('connection','a256'),('CPT_connection','a256'), ('trigger','a256'),('label','a256'), ('start',float),
-                                                                ('stop',float), ('sample freq',float),('wait label','a256'), ('numIterations',int)]
-        CI_table= np.empty(len(counter_acquisitions), dtype=counter_acquisitions_table_dtypes)
-        for i, acq in enumerate(counter_acquisitions):
-            CI_table[i] = acq
-        #print(len(CI_table)) #EE8
 
         self._check_AI_not_too_fast(AI_table)
         self._check_wait_monitor_timeout_device_config()
@@ -677,14 +621,6 @@ class NI_DAQmx(IntermediateDevice):
             grp.create_dataset('DO', data=DO_table, compression=config.compression)
         if AI_table is not None:
             grp.create_dataset('AI', data=AI_table, compression=config.compression)
-        if len(CI_table): # Table must be non empty
-            counter_dataset = grp.create_dataset('COUNTER_ACQUISITIONS',compression=config.compression,data=CI_table)
-        #            counter_dataset2 = grp.create_dataset('COUNTER_ACQUISITIONS2',compression=config.compression,data=counter_acquisition_table)
-            grp.attrs['counter_channels'] = ', '.join(counter_attrs)
-            grp.attrs['cpt_channels'] = ', '.join(CPT_attrs) ##EE2
-            grp.attrs['trig_channels'] = ', '.join(trig_attrs) ##EE2
-            grp.attrs['counter_acquisition_rate'] = self.acquisition_rate ## Emily edit: need to add this, what is it doing?
-            # print(grp.attrs['counter_channels'])
-        # print(grp.attrs['counter_channels'])
+
 
 from .models import *
