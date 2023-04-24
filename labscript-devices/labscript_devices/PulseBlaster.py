@@ -137,7 +137,7 @@ class PulseBlaster(PseudoclockDevice):
                                                 "time_based_stop_workaround",
                                                 "time_based_stop_workaround_extra_time"]}
         )
-    def __init__(self, name, loop_number, trigger_device=None, trigger_connection=None, board_number=0, firmware = '',
+    def __init__(self, name, loop_number, extra_flags, extra_inst, extra_inst_data, extra_length, inst_location, additional_inst, trigger_device=None, trigger_connection=None, board_number=0, firmware = '',
                  programming_scheme='pb_start/BRANCH', pulse_width='symmetric', max_instructions=4000,
                  time_based_stop_workaround=False, time_based_stop_workaround_extra_time=0.5,  **kwargs):
         PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection, **kwargs)
@@ -231,6 +231,12 @@ class PulseBlaster(PseudoclockDevice):
         # This will have the direct DigitalOuts of DDSs of the PulseBlaster connected to it
         self._direct_output_device = PulseBlasterDirectOutputs('%s_direct_output_device'%name, self._direct_output_clock_line)
         self.loop_number = loop_number
+        self.extra_flags = extra_flags 
+        self.extra_inst = extra_inst
+        self.extra_inst_data = extra_inst_data
+        self.extra_length = extra_length
+        self.inst_location = inst_location
+        self.additional_inst = additional_inst
     @property
     def pseudoclock(self):
         return self._pseudoclock
