@@ -2583,6 +2583,10 @@ class CounterIn(Device):
         self.acquisitions.append({'start_time': start_time, 'end_time': end_time, 'sample_freq': sample_freq,
                                  'label': label, 'wait_label':wait_label})
         return end_time - start_time
+    def fast_counter(self, sample_freq):
+        self.acquisitions.append({ 'sample_freq': sample_freq})
+        return 0
+
 
 class Shutter(DigitalOut):
     """Customized version of :obj:`DigitalOut` that accounts for the open/close
