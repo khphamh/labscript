@@ -651,14 +651,14 @@ class NI_DAQmx(IntermediateDevice):
                     counter_acquisitions.append((connection,counter_inputs[connection].CPT_connection,counter_inputs[connection].trigger,acq['label'],acq['start_time'],acq['end_time'],acq['sample_freq'],acq['wait_label'],counter_inputs[connection].numIterations))
             else:
                 for acq in counter_inputs[connection].acquisitions:
-                    counter_acquisitions.append((connection,counter_inputs[connection].CPT_connection,counter_inputs[connection].trigger,acq['sample_freq'],counter_inputs[connection].numIterations) )
+                    counter_acquisitions.append((connection,counter_inputs[connection].CPT_connection,counter_inputs[connection].trigger,acq['sample_freq'], acq['num_called'],acq['save_method'], counter_inputs[connection].numIterations) )
             #print('counter_acquisitions', counter_acquisitions)
         # The 'a256' dtype below limits the string fields to 256
         # characters. Can't imagine this would be an issue, but to not
         # specify the string length (using dtype=str) causes the strings
         # to all come out empty.
         if len(counter_acquisitions) < 9:
-            counter_acquisitions_table_dtypes = [('connection','a256'),('CPT_connection','a256'), ('trigger','a256'), ('sample freq',float), ('numIterations',int)]
+            counter_acquisitions_table_dtypes = [('connection','a256'),('CPT_connection','a256'), ('trigger','a256'), ('sample freq',float), ('num_called',int), ('save_method', int), ('numIterations',int)]
         else:
             counter_acquisitions_table_dtypes = [('connection','a256'),('CPT_connection','a256'), ('trigger','a256'),('label','a256'), ('start',float),
                                                                 ('stop',float), ('sample freq',float),('wait label','a256'), ('numIterations',int)]

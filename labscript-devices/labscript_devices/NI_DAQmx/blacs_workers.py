@@ -137,6 +137,38 @@ class NI_DAQmxOutputWorker(Worker):
                 1, True, 10.0, DAQmx_Val_GroupByChannel, DO_data, written, None
             )
         # TODO: return coerced/quantised values
+        while True:
+            CPS_status = int(np.loadtxt('C:/Users/Yao Lab/labscript-suite/plotter/CPS_status.txt'))
+            if not CPS_status:
+                break
+            else:
+                AO_inputs = np.loadtxt('C:/Users/Yao Lab/labscript-suite/plotter/laser_location.txt')
+                AO_data[0], AO_data[1] = AO_inputs[0], AO_inputs[1]
+                front_panel_values['ao0'],front_panel_values['ao1'] = AO_inputs[0], AO_inputs[1]
+                self.AO_task.WriteAnalogF64(1, True, 1, DAQmx_Val_GroupByChannel, AO_data, written, None)
+
+                sample_freq = 50
+                samps_per_chan = 20
+                counter_data = np.zeros(samps_per_chan, dtype=np.float64)
+                pulser = Task()
+                pulser.CreateCOPulseChanFreq("/Dev2/ctr1", '', DAQmx_Val_Hz, DAQmx_Val_Low, 0, sample_freq, 0.5) 
+                pulser.CfgImplicitTiming(DAQmx_Val_ContSamps, samps_per_chan) #
+                counter_task = Task()
+                counter_task.CreateCICountEdgesChan('/' + 'Dev2/ctr0', '', DAQmx_Val_Rising, 0, DAQmx_Val_CountUp)
+                counter_task.SetCICountEdgesTerm('/Dev2/ctr0', '/Dev2/PFI0')
+                counter_task.CfgSampClkTiming('/Dev2/PFI13', sample_freq, DAQmx_Val_Rising, DAQmx_Val_FiniteSamps, samps_per_chan)
+                counter_task.StartTask()
+                pulser.StartTask()
+
+                counter_task.ReadCounterF64(DAQmx_Val_Auto, -1, counter_data, counter_data.size, int32(), None)
+                counter_task.StopTask()
+                counter_task.ClearTask()
+                pulser.StopTask()
+                pulser.ClearTask()
+                #self.logger.info(counter_data)
+                np.savetxt('C:/Users/Yao Lab/labscript-suite/plotter/CPS.txt', np.array([counter_data[-1]*5/2]) )
+                self.logger.info([AO_inputs, counter_data[-1]*5/2])
+
         return {}
 
     def get_output_tables(self, h5file, device_name):
@@ -272,7 +304,8 @@ class NI_DAQmxOutputWorker(Worker):
         self.AO_all_zero = not np.any(AO_table)
         if self.AO_all_zero:
             AO_table = AO_table[0:1]
-
+        self.logger.info([AO_table])
+        self.logger.info(self.static_AO)
         if self.static_AO or self.AO_all_zero:
             # Static AO. Start the task and write data, no timing configuration.
             self.AO_task.StartTask()
@@ -296,6 +329,7 @@ class NI_DAQmxOutputWorker(Worker):
             )
 
             # Write data:
+            self.logger.info("START WRITING")
             self.AO_task.WriteAnalogF64(
                 npts,
                 False,  # autostart
@@ -764,7 +798,7 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
                     self.counter_task[i].CfgSampClkTiming('/'+CPT_chnl_list[i], sample_freq, DAQmx_Val_Rising, DAQmx_Val_FiniteSamps, samps_per_chan)
                 else:
                     #self.logger.info(self.numIterations)
-                    self.counter_data[i] = np.zeros(int(4*self.numIterations + 2))
+                    self.counter_data[i] = np.zeros(int(self.num_called*(2*self.numIterations + 1)))
                     self.counter_task[i] = Task()
                     #self.logger.info(["Task", i, self.counter_task[i]])
                     self.counter_task[i].CreateCICountEdgesChan('/' + counter_chnl_list[i], '', DAQmx_Val_Rising, 0, DAQmx_Val_CountUp)
@@ -772,7 +806,7 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
                     self.counter_task[i].SetPauseTrigType(DAQmx_Val_DigLvl)
                     self.counter_task[i].SetDigLvlPauseTrigSrc('/'+trig_chnl_list[i])
                     self.counter_task[i].SetDigLvlPauseTrigWhen(DAQmx_Val_Low) 
-                    self.counter_task[i].CfgSampClkTiming('/'+trig_chnl_list[i], sample_freq, DAQmx_Val_Rising, DAQmx_Val_FiniteSamps, int(4*self.numIterations + 2))
+                    self.counter_task[i].CfgSampClkTiming('/'+trig_chnl_list[i], sample_freq, DAQmx_Val_Rising, DAQmx_Val_FiniteSamps, int(self.num_called*(2*self.numIterations + 1)))
                 #self.logger.info(CPT_chnl_list[i])
                 self.counter_task_running = True
 
@@ -869,6 +903,8 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
                 for j, chnl in enumerate([counter_acquisitions[i][0] for i in range(len(counter_acquisitions))]):
                     chnl = chnl.decode("utf-8")
                     self.counter_sample_freqs[device_name+'/'+chnl] = [float(counter_acquisitions[0][3])]
+                    self.num_called = int(counter_acquisitions[0][4])
+                    self.save_method = str(counter_acquisitions[0][5])
             ## ejd 11/18 replacement end              
             # except:
             #     # No acquisitions!
@@ -994,11 +1030,20 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
                 #self.logger.info(self.numIterations)
                 reference_counter_data = np.zeros(self.numIterations)
                 signal_counter_data = np.zeros(self.numIterations)
-                for i in range(self.numIterations): #TODO this won't work if more than one counter channel ejd
-                    reference_counter_data[i], signal_counter_data[i] = self.counter_data[0][3 + 4*i] - self.counter_data[0][1 + 4*i], self.counter_data[0][5+ 4*i] - self.counter_data[0][3 + 4*i]
+                #for i in range(self.numIterations): 
+                    #reference_counter_data[i], signal_counter_data[i] = self.counter_data[0][3 + 4*i] - self.counter_data[0][1 + 4*i], self.counter_data[0][5+ 4*i] - self.counter_data[0][3 + 4*i]
                 #self.logger.info(self.counter_h5_file)
                 file_name = os.path.basename(self.counter_h5_file)[0:-3]
-                np.savetxt(os.path.dirname(self.counter_h5_file ) +'/counter_data_' +file_name + '.txt', np.transpose([reference_counter_data, signal_counter_data]) )
+                #np.savetxt(os.path.dirname(self.counter_h5_file ) +'/counter_data_' +file_name + '.txt', np.transpose([reference_counter_data, signal_counter_data]) )
+                #analysis_data = np.diff(np.diff(self.counter_data[0])[1::2])[0::2]
+                #np.savetxt(os.path.dirname(self.counter_h5_file ) +'total', )
+                counts_data = np.diff(self.counter_data[0])[1::2]
+                if self.save_method == '0':
+                    np.savetxt(os.path.dirname(self.counter_h5_file ) +'/counter_data_' +file_name + '.txt', np.diff(self.counter_data[0])[1::2] ) #DO NOT DELETE
+                elif self.save_method == '1':
+                    ref = np.sum(counts_data[0::2])
+                    sig = np.sum(counts_data[1::2])
+                    np.savetxt(os.path.dirname(self.counter_h5_file ) +'/counter_data_' +file_name + '.txt', np.array([ref,sig]) ) #DO NOT DELETE
                 #counter_measurements.create_dataset('reference_data', data = reference_counter_data)
                 #counter_measurements.create_dataset('signal_data', data = signal_counter_data)
     def abort_buffered(self):
@@ -1010,6 +1055,7 @@ class NI_DAQmxCounterAcquisitionWorker(Worker):
         return self.transition_to_manual(True)   
     
     def program_manual(self,values):
+
         return {}
  
 

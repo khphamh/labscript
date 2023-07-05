@@ -98,11 +98,15 @@ class NI_DAQmxTab(DeviceTab):
             DO_proplist.append((port_str, port_props))
 
         # Create the output objects
+       
         self.create_analog_outputs(AO_prop)
 
         # Create widgets for outputs defined so far (i.e. analog outputs only)
         _, AO_widgets, _ = self.auto_create_widgets()
-
+        counter_prop = {}
+        counter_prop['Run CPS'] = {}
+        self.create_digital_outputs(counter_prop)
+        counter_widgets = self.create_digital_widgets(counter_prop)
         # now create the digital output objects one port at a time
         for _, DO_prop in DO_proplist:
             self.create_digital_outputs(DO_prop)
@@ -111,7 +115,7 @@ class NI_DAQmxTab(DeviceTab):
         DO_widgets_by_port = {}
         for port_str, DO_prop in DO_proplist:
             DO_widgets_by_port[port_str] = self.create_digital_widgets(DO_prop)
-
+        
         # Auto place the widgets in the UI, specifying sort keys for ordering them:
         widget_list = [("Analog outputs", AO_widgets, split_conn_AO)]
         for port_num in range(len(ports)):
@@ -123,6 +127,7 @@ class NI_DAQmxTab(DeviceTab):
             else:
                 name += ' (static)'
             widget_list.append((name, DO_widgets, split_conn_DO))
+        widget_list.append(("Counter", counter_widgets))
         self.auto_place_widgets(*widget_list)
 
         # We only need a wait monitor worker if we are if fact the device with
