@@ -1,47 +1,82 @@
 from labscript import *
-from labscript_devices.PulseBlasterUSB import PulseBlasterUSB
+from labscript_devices.PulseBlasterESRPro500 import PulseBlasterESRPro500
 from labscript_devices.DummyPseudoclock.labscript_devices import DummyPseudoclock
 
 from labscript_devices.NI_DAQmx.models import NI_PCIe_6343
 
-PulseBlasterUSB(name= 'pb', loop_number = numIterations, board_number = 0, programming_scheme = 'pb_start/BRANCH')
-ClockLine(name = "pb_clockline", pseudoclock = pb.pseudoclock, connection = "flag 3")
+PulseBlasterESRPro500(name= 'pb', loop_number = numIterations,  extra_flags = 0, extra_inst = 0, extra_inst_data = 0, extra_length= 0, inst_location = 0, additional_inst = 0, board_number = 0, programming_scheme = 'pb_start/BRANCH')
+ClockLine(name = "pb_clockline", pseudoclock = pb.pseudoclock, connection = "flag 0")
 
-NI_PCIe_6343(name = 'Dev1',
-    parent_device = pb_clockline,
-    clock_terminal = '/Dev1/PFI5',
-    MAX_name = 'Dev1',
-    stop_order = -1,
-    acquisition_rate = 1e5
-    )
 
 DigitalOut('pb_1',pb.direct_outputs, 'flag 1')
+DigitalOut('pb_2',pb.direct_outputs, 'flag 2')
 
-
-
-AnalogOut('anaout_0', Dev1, 'ao0')
-AnalogOut('anaout_1', Dev1, 'ao1')
-AnalogOut('anaout_2', Dev1, 'ao2')
-AnalogOut('anaout_3', Dev1, 'ao3')
-
-
-CounterIn("counter", Dev1, connection = "ctr2", CPT_connection = "PFI13", trigger = "PFI4", numIterations = numIterations)
-#ctr 1 is cpt
-
-DigitalOut('daq_dout_8', Dev1, 'port0/line8') 
-DigitalOut('daq_dout_9', Dev1, 'port0/line9') 
 
 t = 0  
 add_time_marker(t, "Start", verbose = True)
 start()
+'''t+= 20e-9
+for i in range(10):
+    pb_1.go_high(t)
+    t += dt
+    pb_1.go_low(t)
+    t += dt'''
+'''pb_2.go_high(t)
+t+= dt'''
+#t += 20e-9
+#pb_2.go_high(t)
+#for i in range(19):
+'''pb_1.go_high(t)
+t += 0.5e-5
+pb_1.go_low(t)
+t+= 0.5e-5
+t+= 1e-3
+pb_1.go_high(t)
+t += 1e-5
+pb_1.go_low(t)
+t+= 1e-5
+t+= 20e-9
+pb_1.go_high(t)
+t += 6e-8
+pb_1.go_low(t)
+t+= 6e-8'''
+'''pb_2.go_low(t)
+t += 100e-6
+pb_2.go_high(t)
+for i in range(10):
+    pb_1.go_high(t)
+    t += 0.5e-4
+    pb_1.go_low(t)
+    t+= 0.5e-4
+pb_2.go_low(t)'''
+#pb_2.go_high(t)
+#t+= 2e-8
+for i in range(200000):
+    t += 20e-9
+    #pb_2.go_high(t)
+    #t += 10e-6
+    pb_1.go_high(t)
+    t += 0.5e-5 
+    pb_1.go_low(t)
+    #pb_2.go_low(t)
+    '''t += 12e-9
 
-for iter in range(numIterations):
-
-    dt = 100e-6
-    daq_dout_8.go_high(t)
-    counter.acquire(label = 'ref1_'+str(iter), start_time = t, end_time =t+dt, sample_freq = 1e6)
-    t+=dt
-    daq_dout_8.go_low(t)
-    t+=700e-6
-
+    t+= 60e-9
+    t+=0.5e-4
+    t+= 12e-9'''
+    #pb_2.go_high(t)
+    t+=0.5e-5
+    pb_1.go_high(t)
+    t += 1e-5
+    pb_1.go_low(t)
+    #pb_2.go_low(t)
+    t+= 1e-5
+pb_1.go_high(t)
+t += 6e-8
+pb_1.go_low(t)
+t+= 6e-8
+pb_1.go_high(t)
+t += 6e-8
+pb_1.go_low(t)
+t+= 6e-8
 stop(t)

@@ -1,89 +1,80 @@
 from labscript import *
 
 #from labscript_devices.PulseBlaster import PulseBlaster
-from labscript_devices.ZCU4 import ZCU4
+from labscript_devices.ZCU4 import ZCU4, ZCU4DDS, ZCU4TTL
 from labscript_devices.NI_DAQmx.models import NI_PCIe_6343
 
 
-ZCU4(name='pb')
-ClockLine(name = "pin0", pseudoclock=pb.pseudoclock, connection = "flag 1")
+ZCU4(name='pb', com_port = 'COM5')
 
-NI_PCIe_6343(name = 'Dev1',
+#ClockLine('pb_cl', pb.pseudoclock, 'flag 0')
+ZCU4DDS('DDS6', pb.direct_outputs, '6')
+ZCU4TTL('TTL', pb.direct_outputs, 't')
+
+ClockLine(name = "pin0", pseudoclock = pb.pseudoclock, connection = "flag 0")
+NI_PCIe_6343(name = 'Dev2',
     parent_device = pin0,
-    clock_terminal = '/Dev1/PFI4',
-    MAX_name = 'Dev1',
+    clock_terminal = '/Dev2/PFI15',
+    MAX_name = 'Dev2',
     stop_order = -1,
     acquisition_rate = 1e5
     )
 
 
-#ClockLine('pb_cl', pb.pseudoclock, 'flag 0')
-#DigitalOut('pb_0',pb.direct_outputs, 'flag 0')
+AnalogOut('anaout_0', Dev2, 'ao0')
+AnalogOut('anaout_1', Dev2, 'ao1')
+AnalogOut('anaout_2', Dev2, 'ao2')
+AnalogOut('anaout_3', Dev2, 'ao3')
+CounterIn("counter", Dev2, connection = "ctr2", CPT_connection = "PFI13", trigger = "PFI4", numIterations = numIterations)
+#ctr 1 is cpt
 
-#DigitalOut('pb_1',pb.direct_outputs, 'flag 1')
-
-DigitalOut('pb_2',pb.direct_outputs, 'flag 2')
-
-DigitalOut('pb_3',pb.direct_outputs, 'flag 3')
-
-AnalogOut('anaout_0', Dev1, 'ao0')
-AnalogOut('anaout_1', Dev1, 'ao1')
-AnalogOut('anaout_2', Dev1, 'ao2')
-AnalogOut('anaout_3', Dev1, 'ao3')
-#CounterIn('anain_0', Dev1, 'ai1')
-
+DigitalOut('daq_dout_8', Dev2, 'port0/line8') 
+DigitalOut('daq_dout_9', Dev2, 'port0/line9') 
 t = 0 
+s=0
 add_time_marker(t, "Start", verbose = True)
 start()
-#anain_0.acquire(label = "measurement 1", start_time = 0, end_time = 10)
+DDS6.add_pulse(0, 'const', t, 10, 3000, 100, 0, 'oneshot', 'product', '[]')
 
-"""
-for i in range(100):
-    pb_0.go_high(t)
-    pb_1.go_high(t)
-    t+=5000*10
-    pb_0.go_low(t)
-    pb_1.go_low(t)
-    t+=5000*10
-    pb_0.go_high(t)
-    pb_1.go_high(t)
-    t+=10000*10
-    pb_0.go_low(t)
-    pb_1.go_low(t)
-    t+=10000*10"""
-"""for i in range(10):
-    pb_1.go_high(t)
-    #pb_1.go_high(t)
-    t+=(10**(-5))
+dt = 2e-4
+t += 2
+for i in range(x_points):
+    if i % 2:
+        for j in range(y_points):
+            TTL.add_TTL(1, t, t + 5*(10**(-9)))
+            t+=dt        
+            TTL.add_TTL(1, t, t + 5*(10**(-9)))
 
-    #pb_1.go_low(t)
-    t+=(10**(-5))
+            t+=3*dt
+            TTL.add_TTL(1, t, t + 5*(10**(-9)))
+    else:
+        for j in range(y_points):
+            TTL.add_TTL(1, t, t + 5*(10**(-9)))
+            t+=dt
+            TTL.add_TTL(1, t, t + 5*(10**(-9)))
 
-    #pb_1.go_high(t)
-    pb_1.go_low(t)
-    t+=(10**(-5))
+            t+=3*dt        
+            TTL.add_TTL(1, t, t + 5*(10**(-9)))
+    t+=dt
+for i in range(x_points):
+    anaout_0.constant(s, V_x_offset+V_x_min + i*(V_x_max-V_x_min)/x_points)
+    if i % 2:
+        for j in range(y_points):
+            anaout_1.constant(s, V_y_offset + V_y_min + j*(V_y_max-V_y_min)/y_points)
+            s+=dt        
+            daq_dout_8.go_high(s)
+            counter.acquire(label = 'count_'+str(i)+'_'+str(j), start_time = s, end_time =s+3*dt, sample_freq = 1e5)
 
-    #pb_1.go_low(t)
-    t+=(10**(-5))"""
-anaout_3.constant(t, 2)
-t+= 10**(-5)
-anaout_3.constant(t, 3)
+            s+=3*dt
+            daq_dout_8.go_low(s)
+    else:
+        for j in range(y_points):
+            anaout_1.constant(s, V_y_offset + V_y_max - j*(V_y_max-V_y_min)/y_points)
+            s+=dt
+            daq_dout_8.go_high(s)
+            counter.acquire(label = 'count_'+str(i)+'_'+str(j), start_time = s, end_time =s+3*dt, sample_freq = 1e5)
 
-t+= 2*10**(-5)
-
-anaout_3.constant(t, 0)
-
-t+= 10**(-5)
-#anaout_3.sine_ramp(t, 10**(-5), 1,3,10)
-"""
-t+= 10**(-5)
-anaout_3.constant(t, 2)
-
-t+= 2*10**(-5)
-
-anaout_3.constant(t, 0)
-
-t+= 10*(10**(-5))"""
-
-
+            s+=3*dt        
+            daq_dout_8.go_low(s)
+    s +=dt
 stop(t)

@@ -1,9 +1,9 @@
 from labscript import *
 
 #from labscript_devices.PulseBlaster import PulseBlaster
-from labscript_devices.ZCU4 import ZCU4, ZCU4DDS
+from labscript_devices.ZCU4 import ZCU4, ZCU4DDS, ZCU4TTL
 
-ZCU4(name='pb')
+ZCU4(name='pb', com_port = 'COM5')
 
 #ClockLine('pb_cl', pb.pseudoclock, 'flag 0')
 DigitalOut('pb_0',pb.direct_outputs, 'flag 0')
@@ -14,13 +14,14 @@ DigitalOut('pb_2',pb.direct_outputs, 'flag 2')
 
 DigitalOut('pb_3',pb.direct_outputs, 'flag 3')
 ZCU4DDS('DDS6', pb.direct_outputs, '6')
-
+ZCU4TTL('TTL', pb.direct_outputs, 't')
 t = 0 
 add_time_marker(t, "Start", verbose = True)
 start()
 
-DDS6.add_pulse(6, 'const', t, 100, 30000, 100, 0, 'oneshot', 'product', '[]')
-
+#DDS6.add_pulse(6, 'const', t, 100, 30000, 100, 0, 'oneshot', 'product', '[]')
+DDS6.add_pulse(6, 'const', t, 10, 3000, 100, 0, 'oneshot', 'product', '[]')
+TTL.add_TTL(1, t, t + 5*(10**(-9)))
 for i in range(100):
     pb_1.go_high(t)
     #pb_3.go_high(t)
@@ -29,8 +30,8 @@ for i in range(100):
     pb_1.go_low(t)
     #pb_3.go_low(t)
     t+=(10**(-6))/2
-DDS6.add_pulse(6, 'const', t, 50, 32000, 50, 0, 'oneshot', 'product', '[]')
-DDS6.add_pulse(5, 'const', t+2*(10**(-6)), 50, 32000, 50, 0, 'oneshot', 'product', '[]')
+#DDS6.add_pulse(6, 'const', t, 50, 32000, 50, 0, 'oneshot', 'product', '[]')
+#DDS6.add_pulse(5, 'const', t+2*(10**(-6)), 50, 32000, 50, 0, 'oneshot', 'product', '[]')
 
 t+=10**(-6)
 
