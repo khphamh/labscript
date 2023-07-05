@@ -69,48 +69,6 @@ class ZCU111DDS(DDSQuantity):
         self.sequence_list.append((channel, int((start_time)*(10**9)), int((end_time)*(10**9))))
 
 
-profiles = {}
-def profile(funct):
-    func = funct.__name__
-    if func not in profiles:
-        profiles[func] = {'total_time':0, 'min':None, 'max':0, 'num_calls':0, 'average_time_per_call':0}
-    
-    def new_func(*args,**kwargs):
-        start_time = time.time()
-        ret = funct(*args,**kwargs)
-        runtime = time.time()-start_time
-        profiles[func]['total_time'] += runtime
-        profiles[func]['num_calls'] += 1
-        profiles[func]['min'] = profiles[func]['min'] if profiles[func]['min'] is not None and profiles[func]['min'] < runtime else runtime
-        profiles[func]['max'] = profiles[func]['max'] if profiles[func]['max'] > runtime else runtime
-        profiles[func]['average_time_per_call'] = profiles[func]['total_time']/profiles[func]['num_calls']
-        
-        return ret
-    # return new_func
-    return funct
-    
-def start_profile(name):
-    if name not in profiles:
-        profiles[name] = {'total_time':0, 'min':None, 'max':0, 'num_calls':0, 'average_time_per_call':0}
-        
-    if 'start_time' in profiles[name]:
-        raise Exception('You cannot call start_profile for %s without first calling stop_profile'%name)
-        
-    profiles[name]['start_time'] = time.time()
-    
-def stop_profile(name):
-    if name not in profiles or 'start_time' not in profiles[name]:
-        raise Exception('You must first call start_profile for %s before calling stop_profile')
-        
-    runtime = time.time()-profiles[name]['start_time']
-    del profiles[name]['start_time']
-    profiles[name]['total_time'] += runtime
-    profiles[name]['num_calls'] += 1
-    profiles[name]['min'] = profiles[name]['min'] if profiles[name]['min'] is not None and profiles[name]['min'] < runtime else runtime
-    profiles[name]['max'] = profiles[name]['max'] if profiles[name]['max'] > runtime else runtime
-    profiles[name]['average_time_per_call'] = profiles[name]['total_time']/profiles[name]['num_calls']
-
-
 class ZCU111(IntermediateDevice):
     # This device can only have Pseudoclock children (digital outs and DDS outputs should be connected to a child device)
     allowed_children = [DigitalOut, DDS, ZCU111DDS]
@@ -176,6 +134,7 @@ class ZCU111(IntermediateDevice):
                 j[k] = str(j[k])
             DDS_table[i] = (j[0], j[1],j[2],j[3], j[4], j[5], j[6], j[7], j[8], j[9])
         #print(DDS_table)
+        #print(pulse_sequence_list)
         return settings, pulse_sequence_list, sequence_list
     def generate_code(self, hdf5_file):
         # Generate the hardware instructions
@@ -275,53 +234,6 @@ class ZCU111Tab(DeviceTab):
         self.get_tab_layout().addWidget(self.status_label)
         self.get_tab_layout().addWidget(self.clock_status_label)
 
-        # Set the capabilities of this device
-        self.supports_smart_programming(True)
-
-        # Create status monitor timout
-        self.statemachine_timeout_add(2000, self.status_monitor)
-        # Set the capabilities of this device
-        self.supports_remote_value_check(False) # !!!
-        self.supports_smart_programming(False) # !!!
-    @define_state(
-        MODE_MANUAL
-        | MODE_BUFFERED
-        | MODE_TRANSITION_TO_BUFFERED
-        | MODE_TRANSITION_TO_MANUAL,
-        True,
-    )
-    def status_monitor(self, notify_queue=None):
-        """Gets the status of the PrawnBlaster from the worker.
-
-        When called with a queue, this function writes to the queue
-        when the PrawnBlaster is waiting. This indicates the end of
-        an experimental run.
-
-        Args:
-            notify_queue (:class:`~queue.Queue`): Queue to notify when
-                the experiment is done.
-
-        """
-
-        status, clock_status, waits_pending = yield (
-            self.queue_work(self.primary_worker, "check_status")
-        )
-
-        # Manual mode or aborted
-        done_condition = status == 0 or status == 5
-        done_condition = True
-        # Update GUI status/clock status widgets
-        self.status_label.setText(f"Status: {status}")
-        self.clock_status_label.setText(f"Clock status: {clock_status}")
-
-        if notify_queue is not None and done_condition and not waits_pending:
-            # Experiment is over. Tell the queue manager about it, then
-            # set the status checking timeout back to every 2 seconds
-            # with no queue.
-            notify_queue.put("done")
-            self.statemachine_timeout_remove(self.status_monitor)
-            self.statemachine_timeout_add(2000, self.status_monitor)
-
 
 import re
 class ZCU111Worker(Worker):
@@ -338,50 +250,40 @@ class ZCU111Worker(Worker):
         self.sequence_list = []
         self.pulse_list = []
         self.final_values = {}
+        self.first_run = True
 
         self.smart_cache = {'RF_DATA': None,
                             'SWEEP_DATA': None}
+        '''with open('C:/Users/Yao Lab/labscript-suite/plotter/start_pulse.py') as f:
+            exec(f.read())'''
+        self.logger.info("INITIALIZING")
+        self.ZCU4ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
 
-        ZCU4ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
+        if(self.ZCU4ser.isOpen() == False):
+            self.ZCU4ser.open()
 
-        if(ZCU4ser.isOpen() == False):
-            ZCU4ser.open()
-        '''
-        while True:
-            if ZCU4ser.inWaiting() > 0:
-                break
-        time.sleep(30)
-        '''
-        ZCU4ser.write(b"cd jupyter_notebooks\r\n")
+        self.ZCU4ser.write(b"cd jupyter_notebooks\r\n")
 
-        ZCU4ser.write(b"cd qick\r\n")
+        self.ZCU4ser.write(b"cd qick\r\n")
         
-        ZCU4ser.write(b"cd qick_demos\r\n")
+        self.ZCU4ser.write(b"cd qick_demos\r\n")
 
-        ZCU4ser.write(b"sudo python3\r\n")
+        self.ZCU4ser.write(b"sudo python3\r\n")
         time.sleep(2)
 
-        ZCU4ser.write(b"xilinx\r\n")
+        self.ZCU4ser.write(b"xilinx\r\n")
         time.sleep(2)
-
-        ZCU4ser.write(b"exec(open('initialize.py').read())\r\n")
-        time.sleep(10)
-        self.logger.info(ZCU4ser.read(ZCU4ser.inWaiting()).decode())
-        ZCU4ser.close()
-
-
-    def check_status(self):
-        return 2, 0, False
+        self.ZCU4ser.write(b"exec(open('initialize.py').read())\r\n")
+        time.sleep(15)
+        self.logger.info(self.ZCU4ser.read(self.ZCU4ser.inWaiting()).decode())
+        #self.ZCU4ser.write(b"exec(open('test_pulse.py').read())\r\n")
+        self.ZCU4ser.close()
 
     def check_remote_values(self):
         results = {}
         for i in range(7):
             results['channel '+str(i)]=  {}
         self.final_values = {}
-
-        ZCU4ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
-        if(ZCU4ser.isOpen() == False):
-            ZCU4ser.open()
 
 
         for i in range(7):
@@ -394,8 +296,9 @@ class ZCU111Worker(Worker):
         return results
 
     def program_manual(self,front_panel_values):
+        self.logger.info("In MANUAL")
 
-        ZCU4ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
+        '''ZCU4ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
         if(ZCU4ser.isOpen() == False):
             ZCU4ser.open()
 
@@ -427,7 +330,7 @@ class ZCU111Worker(Worker):
         time.sleep(1)
         ZCU4ser.write(b"exec(open('send_pulse.py').read())\r\n")
 
-        ZCU4ser.close()
+        ZCU4ser.close()'''
 
         # Now that a manual update has been done, we'd better invalidate the saved RF_DATA:
         self.smart_cache['RF_DATA'] = None
@@ -439,11 +342,14 @@ class ZCU111Worker(Worker):
         self.started = True
 
     def transition_to_buffered(self,device_name,h5file,initial_values,fresh):
+        self.logger.info("IN BUFFERED")
         self.h5file = h5file
         self.started = False
+        self.device_name = device_name
         self.sequence_list = []
         self.pulse_list = []
         return_values = {'a': 1}
+
         with h5py.File(h5file,'r') as hdf5_file:
             group = hdf5_file['devices/%s'%device_name]
             Settings = group['Settings']
@@ -452,40 +358,26 @@ class ZCU111Worker(Worker):
             group = hdf5_file['devices/%s'%device_name]
             DDS_table = group['DDS'][:]
             self.reps = int(Settings[0][0].decode())
-            self.delay_time_repetitions = int(Settings[0][1].decode())
-            self.start_src = '\''+ Settings[0][2].decode()+ '\''
-            self.logger.info(self.reps)
-            self.logger.info(self.delay_time_repetitions)
-            self.logger.info(self.start_src)
+            self.delay_time_repetitions = float(Settings[0][1].decode())
 
-            for i in range(len(DDS)):
-                self.pulse_list.append([int(DDS[i][0].decode()), DDS[i][1].decode(), int(float(DDS[i][2].decode())*(10**9)), int(DDS[i][3].decode()),int(DDS[i][4].decode()),int(DDS[i][5].decode()),int(DDS[i][6].decode()),DDS[i][7].decode(),DDS[i][8].decode(),DDS[i][9].decode()    ]   )
-            self.logger.info(self.pulse_list)
-            for i in range(len(TTL)):
-                self.sequence_list.append( (int(TTL[i][0]), int(TTL[i][1]), int(TTL[i][2] )))  
-            self.logger.info(self.sequence_list)
+        '''if(self.ZCU4ser.isOpen() == False):
+            self.ZCU4ser.open()
 
-
-        ZCU4ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
-        if(ZCU4ser.isOpen() == False):
-            ZCU4ser.open()
-
+        
         pulse_list_string = "pulse_list = " + str(self.pulse_list) + "\r\n"
-        ZCU4ser.write(pulse_list_string.encode())
+        self.ZCU4ser.write(pulse_list_string.encode())
         sequence_list_string = "sequence_list = " + str(self.sequence_list) + "\r\n"
-        ZCU4ser.write(sequence_list_string.encode())
+        self.ZCU4ser.write(sequence_list_string.encode())
         loop_number_string = "number_of_loops = " + str(self.reps) + "\r\n"
-        ZCU4ser.write(loop_number_string.encode())
+        self.ZCU4ser.write(loop_number_string.encode())
         delay_time_string = "delay_time = " + str(self.delay_time_repetitions) + "\r\n"
-        ZCU4ser.write(delay_time_string.encode())
+        self.ZCU4ser.write(delay_time_string.encode())
         start_src_string = "start = " + self.start_src + "\r\n"
-        ZCU4ser.write(start_src_string.encode())
-        ZCU4ser.write(b"exec(open('send_pulse.py').read())\r\n")
-        #ZCU4ser.write(b"exec(open('test_pulse.py').read())\r\n")
-        time.sleep(2)
-        self.logger.info(time.time())
-        self.logger.info(ZCU4ser.read(ZCU4ser.inWaiting()).decode())
-        ZCU4ser.close()
+        self.ZCU4ser.write(start_src_string.encode())
+        self.ZCU4ser.write(b"exec(open('send_pulse.py').read())\r\n")
+        #self.logger.info(self.ZCU4ser.read(self.ZCU4ser.inWaiting()).decode())
+        self.ZCU4ser.close()'''
+        #self.first_run = False
         return return_values
 
 
@@ -496,11 +388,48 @@ class ZCU111Worker(Worker):
         return self.transition_to_manual(True)
 
     def transition_to_manual(self,abort = False):
+        self.logger.info("TRANSITION TO MANUAL")
 
+        self.sequence_list = []
+        self.pulse_list = []
+        with h5py.File(self.h5file,'r') as hdf5_file:
+            group = hdf5_file['devices/%s'%self.device_name]
+            Settings = group['Settings']
+            DDS = group['DDS']
+            TTL = group['TTL']
+            group = hdf5_file['devices/%s'%self.device_name]
+            DDS_table = group['DDS'][:]
+            self.reps = int(Settings[0][0].decode())
+            self.delay_time_repetitions = float(Settings[0][1].decode())
+            #self.logger.info(self.reps)
+            #self.logger.info(self.delay_time_repetitions)
+            #self.logger.info(self.start_src)
+
+            for i in range(len(DDS)):
+                self.pulse_list.append([int(DDS[i][0].decode()), DDS[i][1].decode(), int(float(DDS[i][2].decode())*(10**9)), float(DDS[i][3].decode()),int(DDS[i][4].decode()),int(DDS[i][5].decode()),int(DDS[i][6].decode()),DDS[i][7].decode(),DDS[i][8].decode(),DDS[i][9].decode()    ]   )
+            self.logger.info(self.pulse_list)
+            for i in range(len(TTL)):
+                self.sequence_list.append( (int(TTL[i][0]), int(TTL[i][1]), int(TTL[i][2] )))  
+            self.logger.info(self.sequence_list)
+
+        if(self.ZCU4ser.isOpen() == False):
+            self.ZCU4ser.open()
+
+        pulse_list_string = "pulse_list = " + str(self.pulse_list) + "\r\n"
+        self.ZCU4ser.write(pulse_list_string.encode())
+        sequence_list_string = "sequence_list = " + str(self.sequence_list) + "\r\n"
+        self.ZCU4ser.write(sequence_list_string.encode())
+        loop_number_string = "number_of_loops = " + str(self.reps) + "\r\n"
+        self.ZCU4ser.write(loop_number_string.encode())
+        delay_time_string = "delay_time = " + str(self.delay_time_repetitions) + "\r\n"
+        self.ZCU4ser.write(delay_time_string.encode())
+        self.ZCU4ser.write(b"exec(open('send_pulse.py').read())\r\n")
+        self.ZCU4ser.close()
 
         return True
 
     def shutdown(self):
+        self.ZCU4ser.close()
         return
 
 

@@ -47,9 +47,12 @@ class SRS384DDS(DDSQuantity):
 
         if call_parents_add_device:
             self.parent_device.add_device(self)
+        self.output = False
         self.enable_settings = False
         self.IQ_settings = False #[IQ on/off, FREQ Sweep on/off]
         self.freq_sweep_settings = False #[IQ on/off, FREQ Sweep on/off]
+        self.freq_sweep_rate = 0
+        self.freq_sweep_dev = 0
 
     def hold_phase(self, t):
         self.phase_reset.go_high(t)
@@ -58,6 +61,9 @@ class SRS384DDS(DDSQuantity):
         self.phase_reset.go_low(t)
 
     def enable_output(self, t):
+        self.output = True
+
+    def enable_mod(self, t):
         self.enable_settings = True
 
     def enable_IQ(self, t):
@@ -65,6 +71,12 @@ class SRS384DDS(DDSQuantity):
 
     def enable_freq_sweep(self,t):
         self.freq_sweep_settings = True
+
+    def set_sweep_rate(self,t, freq_rate):
+        self.freq_sweep_rate = freq_rate
+
+    def set_sweep_dev(self,t, freq_dev):
+        self.freq_sweep_dev = freq_dev
 
 profiles = {}
 def profile(funct):
@@ -149,17 +161,23 @@ class SRS384(IntermediateDevice):
         for connection, input in inputs.items():
             amp = input.__dict__['amplitude'].__dict__['raw_output'][0]
             freq = input.__dict__['frequency'].__dict__['raw_output'][0]
+            output = input.__dict__['output']
             enable_settings = input.__dict__['enable_settings']
             IQ_settings = input.__dict__['IQ_settings']
             freq_sweep_settings = input.__dict__['freq_sweep_settings']
+            freq_sweep_rate = input.__dict__['freq_sweep_rate']
+            freq_sweep_dev = input.__dict__['freq_sweep_dev']
 
-        settings = [(amp, freq, enable_settings, IQ_settings, freq_sweep_settings)]
+        settings = [(amp, freq, output, enable_settings, IQ_settings, freq_sweep_settings, freq_sweep_dev, freq_sweep_rate)]
         settings_dtypes = [
             ('amp', float),
             ('freq', float),
+            ('output', bool),
             ('enable_settings', bool),
             ('IQ_settings', bool),
-            ('freq_sweep_settings', bool)
+            ('freq_sweep_settings', bool),
+            ('freq_sweep_dev', float),
+            ('freq_sweep_rate', float)
         ]
         settings_table = np.empty(len(settings), dtype=settings_dtypes)
         for i, acq in enumerate(settings):
@@ -207,9 +225,9 @@ class SRS384Tab(DeviceTab):
         # Capabilities
                 # Create status labels
 
-        self.base_units =    {'freq':'MHz',         'amp':'V',   'phase':'Degrees', 'rate':'Hz', 'deviation': "MHz"}
-        self.base_min =      {'freq':0,           'amp':-10,  'phase':0, 'rate':0, 'deviation': 0}
-        self.base_max =      {'freq':4000.,         'amp':10,    'phase':360, 'rate':10**9, 'deviation': 100}
+        self.base_units =    {'freq':'MHz',         'amp':'dBm',   'phase':'Degrees', 'rate':'Hz', 'deviation': "MHz"}
+        self.base_min =      {'freq':0,           'amp':-50,  'phase':0, 'rate':0, 'deviation': 0}
+        self.base_max =      {'freq':4000.,         'amp':0,    'phase':360, 'rate':10**9, 'deviation': 100}
         self.base_step =     {'freq':1.0,           'amp':0.1,     'phase':1, 'rate':1, 'deviation': 0.001}
         self.base_decimals = {'freq':4,             'amp':4,       'phase':3,  'rate':4, 'deviation':4} # TODO: find out what the phase precision is!
         self.num_DO = 8
@@ -237,6 +255,7 @@ class SRS384Tab(DeviceTab):
 
 
         do_prop = {}
+        do_prop['Output'] = {}
         do_prop['IQ'] = {}
         do_prop["Frequency Sweep"] = {}
 
@@ -327,23 +346,14 @@ class SRS384Worker(Worker):
 
         self.smart_cache = {'RF_DATA': None,
                             'SWEEP_DATA': None}
-        SRS384ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
 
-        if(SRS384ser.isOpen() == False):
-            SRS384ser.open()
-        enable_LF = "ENBL " + str(1) + " \r\n" 
-        SRS384ser.write(enable_LF.encode())
-        enable_BR = "ENBR " + str(1) + " \r\n" 
-        SRS384ser.write(enable_BR.encode())
-
-        SRS384ser.close()
 
     def check_status(self):
         return 2, 0, False
 
     def check_remote_values(self):
         results = {}
-
+        self.logger.info("CHECK REMOTE VALUES")
         self.logger.info("flag" + str(self.flag))
         for i in range(1):
             results['channel '+str(i)]=  {}
@@ -362,11 +372,11 @@ class SRS384Worker(Worker):
         results['channel '+str(0)]['freq'] = float(freq)
         self.logger.info(freq)
         SRS384ser.read(SRS384ser.inWaiting()).decode()
-        SRS384ser.write(b"AMPL? VPP \r\n")
+        SRS384ser.write(b"AMPL? \r\n")
         amp = SRS384ser.read(SRS384ser.inWaiting()).decode()
 
         while amp == '':
-            SRS384ser.write(b"AMPL? VPP \r\n")
+            SRS384ser.write(b"AMPL? \r\n")
             amp = SRS384ser.read(SRS384ser.inWaiting()).decode()
             self.logger.info("ASASA" + amp)
         self.logger.info("ASDQSAAS" + str(re.findall("\d+\.\d+", amp)))
@@ -381,15 +391,21 @@ class SRS384Worker(Worker):
 
 
     def program_manual(self,front_panel_values):
+        self.logger.info("PROGRAM MANUAL")
+
         SRS384ser = serial.Serial(self.COMPort, baudrate=self.baudrate, timeout=1)
         if(SRS384ser.isOpen() == False):
             SRS384ser.open()
-
+        enable_LF = "ENBL " + str(0) + " \r\n" 
+        SRS384ser.write(enable_LF.encode())
+        enable_BR = "ENBR " + str(0) + " \r\n" 
+        SRS384ser.write(enable_BR.encode())
 
         values = front_panel_values['Output Channel']
-        v_amp = values['amp']
-        v_rms = (2**(-1.5))*v_amp
-        amp_string = "AMPL " + str(v_rms) + " RMS \r\n" 
+        power_dBm = values['amp']
+        amp_string = "AMPL " + str(power_dBm) + " \r\n" 
+        SRS384ser.write(amp_string.encode())
+        amp_string = "AMPR " + str(power_dBm) + " \r\n" 
         SRS384ser.write(amp_string.encode())
 
         freq = values['freq']
@@ -405,15 +421,27 @@ class SRS384Worker(Worker):
 
         results['Output Channel']=  {}
         results['Output Channel']['freq'] = freq
-        results['Output Channel']['amp'] = v_amp
+        results['Output Channel']['amp'] = power_dBm
         results['Output Channel']['phase'] = 0
 
         mod_values = front_panel_values['Modulation Settings']
+        #print(mod_values)
         mod_rate = mod_values['rate']
         mod_rate_string = "SRAT " + str(mod_rate) + " \r\n"
         mod_deviation = mod_values['deviation']
         mod_deviation_string = "SDEV " + str(mod_deviation) + " MHZ \r\n" 
         mod_function_string = "SFNC " + str(1) + " MHZ \r\n" 
+
+        if front_panel_values["Output"]:
+            enable_LF = "ENBL " + str(1) + " \r\n" 
+            SRS384ser.write(enable_LF.encode())
+            enable_BR = "ENBR " + str(1) + " \r\n" 
+            SRS384ser.write(enable_BR.encode())
+        else:
+            enable_LF = "ENBL " + str(0) + " \r\n" 
+            SRS384ser.write(enable_LF.encode())
+            enable_BR = "ENBR " + str(0) + " \r\n" 
+            SRS384ser.write(enable_BR.encode())
 
         if front_panel_values["IQ"] and not front_panel_values["Frequency Sweep"]:
             enable_mod_string = "MODL " + str(1) + " \r\n" 
@@ -462,22 +490,23 @@ class SRS384Worker(Worker):
             group = hdf5_file['devices/%s'%device_name]
             DDS_table = group['DDS'][:]
             self.logger.info(DDS_table)
-            v_amp = DDS_table[0][0]
-            v_rms = (2**(-1.5))*v_amp
-            amp_string = "AMPL " + str(v_rms) + " RMS \r\n" 
+            power_dBm = DDS_table[0][0]
+            amp_string = "AMPL " + str(power_dBm) + " \r\n" 
+            SRS384ser.write(amp_string.encode())
+            amp_string = "AMPR " + str(power_dBm) + " \r\n" 
             SRS384ser.write(amp_string.encode())
 
             freq = DDS_table[0][1]
             freq_string = "FREQ " + str(freq) + " MHZ \r\n" 
             SRS384ser.write(freq_string.encode())
 
-            if DDS_table[0][2]:
+            if DDS_table[0][3]:
                 enable_LF = "ENBL " + str(1) + " \r\n" 
                 SRS384ser.write(enable_LF.encode())
                 enable_BR = "ENBR " + str(1) + " \r\n" 
                 SRS384ser.write(enable_BR.encode())
 
-            if DDS_table[0][3]:
+            if DDS_table[0][4]:
                 enable_mod_string = "MODL " + str(1) + " \r\n" 
                 SRS384ser.write(enable_mod_string.encode())
                 mod_string = "TYPE " + '6' + " \r\n" 
@@ -485,6 +514,25 @@ class SRS384Worker(Worker):
 
                 IQ_setting_string = "QFNC " + str(5) + " \r\n"
                 SRS384ser.write(IQ_setting_string.encode())
+                coup_string = "COUP " + '1' + " \r\n" 
+                SRS384ser.write(coup_string.encode())
+            elif DDS_table[0][5]:
+                enable_mod_string = "MODL " + str(1) + " \r\n" 
+                SRS384ser.write(enable_mod_string.encode())
+                mod_string = "TYPE " + '3' + " \r\n" 
+                SRS384ser.write(mod_string.encode())
+                coup_string = "COUP " + '1' + " \r\n" 
+                SRS384ser.write(coup_string.encode())
+
+                freq_sweep_string = "SFNC " + '5' + " \r\n"
+                SRS384ser.write(freq_sweep_string.encode())
+
+                SDEV_string = "SDEV " + str(DDS_table[0][6]) + " \r\n"
+                print(SDEV_string)
+                SRS384ser.write(SDEV_string.encode())
+
+                SRAT_string = "SRAT " + str(DDS_table[0][7]) + " \r\n"
+                SRS384ser.write(SRAT_string.encode())
             #raise LabscriptError(DDS_table)
         SRS384ser.close()
 
@@ -512,120 +560,6 @@ class SRS384Worker(Worker):
 
         return
 
-import labscript_utils.h5_lock  # noqa: F401
-import h5py
-import numpy as np
-
-import labscript_utils.properties as properties
-
-
-class SRS384Parser(object):
-    """Runviewer parser for the SRS384 Pseudoclocks."""
-    def __init__(self, path, device):
-        """
-        Args:
-            path (str): path to h5 shot file
-            device (str): labscript name of SRS384 device
-        """
-        self.path = path
-        self.name = device.name
-        self.device = device
-
-    def get_traces(self, add_trace, clock=None):
-        """Reads the shot file and extracts hardware instructions to produce
-        runviewer traces.
-
-        Args:
-            add_trace (func): function handle that adds traces to runviewer
-            clock (tuple, optional): clock times from timing device, if not
-                the primary pseudoclock
-
-        Returns:
-            dict: Dictionary of clocklines and triggers derived from instructions
-        """
-
-        if clock is not None:
-            times, clock_value = clock[0], clock[1]
-            clock_indices = np.where((clock_value[1:] - clock_value[:-1]) == 1)[0] + 1
-            # If initial clock value is 1, then this counts as a rising edge
-            # (clock should be 0 before experiment) but this is not picked up
-            # by the above code. So we insert it!
-            if clock_value[0] == 1:
-                clock_indices = np.insert(clock_indices, 0, 0)
-            clock_ticks = times[clock_indices]
-
-        # get the pulse program
-        pulse_programs = []
-        with h5py.File(self.path, "r") as f:
-            # Get the device properties
-            device_props = properties.get(f, self.name, "device_properties")
-            conn_props = properties.get(f, self.name, "connection_table_properties")
-
-            self.clock_resolution = device_props["clock_resolution"]
-            self.trigger_delay = device_props["trigger_delay"]
-            self.wait_delay = device_props["wait_delay"]
-
-            # Extract the pulse programs
-            num_pseudoclocks = conn_props["num_pseudoclocks"]
-            for i in range(num_pseudoclocks):
-                pulse_programs.append(f[f"devices/{self.name}/PULSE_PROGRAM_{i}"][:])
-
-        # Generate clocklines and triggers
-        clocklines_and_triggers = {}
-        
-        for pseudoclock_name, pseudoclock in self.device.child_list.items():
-            # Get pseudoclock index
-            connection_parts = pseudoclock.parent_port.split()
-            # Skip if not one of the 4 possible pseudoclock outputs (there is one for
-            # the wait monitor too potentially)
-            if connection_parts[0] != "pseudoclock":
-                continue
-
-            # Get the pulse program
-            index = int(connection_parts[1])
-            pulse_program = pulse_programs[index]
-
-            time = []
-            states = []
-            trigger_index = 0
-            t = 0 if clock is None else clock_ticks[trigger_index] + self.trigger_delay
-            trigger_index += 1
-
-            clock_factor = self.clock_resolution / 2.0
-
-            last_instruction_was_wait = False
-            for row in pulse_program:
-                if row["reps"] == 0 and not last_instruction_was_wait:  # WAIT
-                    last_instruction_was_wait = True
-                    if clock is not None:
-                        t = clock_ticks[trigger_index] + self.trigger_delay
-                        trigger_index += 1
-                    else:
-                        t += self.wait_delay
-                elif last_instruction_was_wait:
-                    # two waits in a row means an indefinite wait, so we just skip this
-                    # instruction.
-                    last_instruction_was_wait = False
-                    continue
-                else:
-                    last_instruction_was_wait = False
-                    for i in range(row["reps"]):
-                        for j in range(1, -1, -1):
-                            time.append(t)
-                            states.append(j)
-                            t += row["half_period"] * clock_factor
-
-            pseudoclock_clock = (np.array(time), np.array(states))
-
-            for clock_line_name, clock_line in pseudoclock.child_list.items():
-                # Ignore the dummy internal wait monitor clockline
-                if clock_line.parent_port.startswith("GPIO"):
-                    clocklines_and_triggers[clock_line_name] = pseudoclock_clock
-                    add_trace(
-                        clock_line_name, pseudoclock_clock, self.name, clock_line.parent_port
-                    )
-
-        return clocklines_and_triggers
 
 
 
@@ -633,10 +567,8 @@ import labscript_devices
 
 labscript_device_name = 'SRS384'
 blacs_tab = 'labscript_devices.SRS384.SRS384Tab'
-parser = 'labscript_devices.SRS384.SRS384Parser'
 
 labscript_devices.register_classes(
     labscript_device_name=labscript_device_name,
-    BLACS_tab=blacs_tab,
-    runviewer_parser=parser,
+    BLACS_tab=blacs_tab
 )

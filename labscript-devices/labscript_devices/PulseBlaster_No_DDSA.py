@@ -1,6 +1,6 @@
 #####################################################################
 #                                                                   #
-# /Pulseblaster_No_DDS.py                                           #
+# /Pulseblaster_No_DDSA.py                                           #
 #                                                                   #
 # Copyright 2013, Monash University                                 #
 #                                                                   #
@@ -13,12 +13,12 @@
 
 from labscript_devices import BLACS_tab, runviewer_parser
 from labscript_devices.PulseBlaster import PulseBlaster, PulseBlasterParser
-from labscript import PseudoclockDevice, config, LabscriptError
-import time
+from labscript import PseudoclockDevice, config
+
 import numpy as np
 
 
-class PulseBlaster_No_DDS(PulseBlaster):
+class PulseBlaster_No_DDSA(PulseBlaster):
 
     description = 'generic DO only Pulseblaster'
     clock_limit = 8.3e6 # can probably go faster
@@ -28,53 +28,15 @@ class PulseBlaster_No_DDS(PulseBlaster):
     
     def write_pb_inst_to_h5(self, pb_inst, hdf5_file):
         # OK now we squeeze the instructions into a numpy array ready for writing to hdf5:
-        pb_dtype= [('flags',np.int32), ('inst',np.int32), ('inst_data',np.int32), ('length',np.float64), ('loop_number',np.int32), ('extra_flags', np.int32), ('extra_inst',np.int32), ('extra_inst_data',np.int32), ('extra_length',np.float64), ('additional_inst',np.int32), ('loop_start', np.int32)]
+        pb_dtype= [('flags',np.int32), ('inst',np.int32), ('inst_data',np.int32), ('length',np.float64)]
         pb_inst_table = np.empty(len(pb_inst),dtype = pb_dtype)
-        loops = self.loop_number
-        extra_flags = self.extra_flags
-        extra_inst = self.extra_inst
-        extra_inst_data = self.extra_inst_data
-        extra_length = self.extra_length
-        additional_inst = self.additional_inst
-        loop_start = self.loop_start
-        
         for i,inst in enumerate(pb_inst):
             flagint = int(inst['flags'][::-1],2)
             instructionint = self.pb_instructions[inst['instruction']]
             dataint = inst['data']
             delaydouble = inst['delay']
-            pb_inst_table[i] = (flagint, instructionint, dataint, delaydouble, loops, extra_flags, extra_inst, extra_inst_data, extra_length, additional_inst, loop_start)
-        #pb_inst_table[-1] = (np.int32(0), np.int32(3),  np.int32(2),  np.float32(10),   np.int32(loops) )
-        #print(len(pb_inst_table), pb_inst_table)
+            pb_inst_table[i] = (flagint, instructionint, dataint, delaydouble)
         
-        '''if pb_inst_table[2][3] > 10:
-            loop_table = np.empty(1,dtype = pb_dtype)
-            loop_table[0] = (np.int32(0), np.int32(3),  np.int32(2),  np.float32(10),   np.int32(loops), 0, 0, 0, 0, 0 )
-            pb_inst_table = np.append(pb_inst_table, loop_table)
-            number_of_lines_to_keep = int((len(pb_inst_table) - 6)/self.loop_number)
-            pb_inst_table = pb_inst_table[list(range(0,number_of_lines_to_keep+2)) + [len(pb_inst_table)-4, len(pb_inst_table)-3,  len(pb_inst_table)-2,  len(pb_inst_table)-1]]'''
-        
-        loop_table = np.empty(1,dtype = pb_dtype)
-        loop_table[0] = (np.int32(extra_flags), np.int32(extra_inst),  np.int32(extra_inst_data),  np.float32(extra_length),   np.int32(loops), 0, 0, 0, 0, np.int32(additional_inst), np.int32(loop_start) )
-        pb_inst_table = np.append(pb_inst_table, loop_table)
-        pb_inst_table = np.append(pb_inst_table[0:self.inst_location], np.roll(pb_inst_table[len(pb_inst_table)-self.additional_inst-4:len(pb_inst_table) + 1],1))
-        '''loop_table = np.empty(1,dtype = pb_dtype)
-        loop_table[0] = (np.int32(extra_flags), np.int32(extra_inst),  np.int32(extra_inst_data),  np.float32(extra_length),   np.int32(loops), 0, 0, 0, 0, np.int32(additional_inst) )
-        pb_inst_table = np.append(pb_inst_table, loop_table)
-        pb_inst_table = np.append(pb_inst_table[0:self.inst_location], np.roll(pb_inst_table[self.inst_location:len(pb_inst_table) + 1],1))'''
-        '''pb_length = len(pb_inst_table)
-        number_of_lines_to_keep = int((pb_length - 7)/self.loop_number)
-        extra_array = list(range(pb_length - 3 -self.extra_instruction, pb_length)) 
-        pb_inst_table = pb_inst_table[list(range(0,number_of_lines_to_keep+4)) + extra_array]
-        pb_inst_table[-4-self.extra_instruction][1] = 3
-        pb_inst_table[-4-self.extra_instruction][2] = 4'''
-        #print(len(pb_inst_table))
-        print(len(pb_inst_table), pb_inst_table)
-
-        '''if len(pb_inst_table) != 24:
-            print(len(pb_inst_table), pb_inst_table)'''
-
-        #raise LabscriptError(pb_inst_table)
         # Okay now write it to the file: 
         group = hdf5_file['/devices/'+self.name]  
         group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = pb_inst_table)         
@@ -105,12 +67,12 @@ from qtutils.qt import QtGui
 from qtutils.qt import QtWidgets
 
 @BLACS_tab
-class Pulseblaster_No_DDS_Tab(DeviceTab):
+class Pulseblaster_No_DDSA_Tab(DeviceTab):
     # Capabilities
     num_DO = 24
     def __init__(self,*args,**kwargs):
         if not hasattr(self,'device_worker_class'):
-            self.device_worker_class = PulseblasterNoDDSWorker
+            self.device_worker_class = PulseblasterNoDDSAWorker
         DeviceTab.__init__(self,*args,**kwargs)
         
     def initialise_GUI(self):
@@ -121,7 +83,7 @@ class Pulseblaster_No_DDS_Tab(DeviceTab):
         # Create the output objects         
         self.create_digital_outputs(do_prop)        
         # Create widgets for output objects
-        dds_widgets,ao_widgets,do_widgets = self.auto_create_widgets()
+        DDSA_widgets,ao_widgets,do_widgets = self.auto_create_widgets()
         
         # Define the sort function for the digital outputs
         def sort(channel):
@@ -200,7 +162,7 @@ class Pulseblaster_No_DDS_Tab(DeviceTab):
             else:
                 return ''
         else:
-            # else it's a child of a DDS, so we can use the default behaviour to find the device
+            # else it's a child of a DDSA, so we can use the default behaviour to find the device
             return DeviceTab.get_child_from_connection_table(self, parent_device_name, port)
     
     # This function gets the status of the Pulseblaster from the spinapi,
@@ -266,7 +228,7 @@ class Pulseblaster_No_DDS_Tab(DeviceTab):
         self.statemachine_timeout_add(100,self.status_monitor,notify_queue)
 
 
-class PulseblasterNoDDSWorker(Worker):
+class PulseblasterNoDDSAWorker(Worker):
     core_clock_freq = 100
     def init(self):
         exec('from spinapi import *', globals())
@@ -298,7 +260,7 @@ class PulseblasterNoDDSWorker(Worker):
         self.time_based_shot_end_time = None
 
     def program_manual(self,values):
-        # Program the DDS registers:
+        # Program the DDSA registers:
         
         # create flags string
         # NOTE: The spinapi can take a string or integer for flags.
@@ -321,7 +283,7 @@ class PulseblasterNoDDSWorker(Worker):
         if self.programming_scheme == 'pb_stop_programming/STOP':
             # Need to ensure device is stopped before programming - or we won't know what line it's on.
             pb_stop()
-        self.logger.info(flags)
+            
         # Write the first two lines of the pulse program:
         pb_start_programming(PULSE_PROGRAM)
         # Line zero is a wait:
@@ -370,39 +332,9 @@ class PulseblasterNoDDSWorker(Worker):
             
             # Now for the pulse program:
             pulse_program = group['PULSE_PROGRAM'][2:]
-            #self.logger.info(pulse_program)
-            '''if pulse_program[0][3] > 10:
-                for i in range(1, len(pulse_program)-4):
-                    pulse_program[i][1] = 0
-
-                pulse_program[0][2] = pulse_program[0][4] 
-                n4 = pulse_program[-1].copy() 
-                n3 = pulse_program[-4].copy()
-                n2 = pulse_program[-3].copy() 
-                n1 = pulse_program[-2].copy()
-                pulse_program[-4], pulse_program[-3], pulse_program[-2], pulse_program[-1] = n4, n3, n2, n1 
-                pulse_program[-2][2] = pulse_program[-2][2] + 1'''
-            
-            for i in range(0, len(pulse_program)-4-pulse_program[0][-2]):
-                #self.logger.info(i)
-                pulse_program[i][1] = 0
-            loop_start = pulse_program[0][-1]
-            self.logger.info([loop_start])
-            #loop_start = 0 
-            pulse_program[loop_start][1] = 2
-            pulse_program[loop_start][2] = pulse_program[0][4]
-            '''if pulse_program[2][0] % 2:
-                pulse_program = np.delete(pulse_program,[0,1])
-                pulse_program[-4-pulse_program[0][5]][2] = 2
-                pulse_program[0][1] = 2'''
-            #pulse_program[0][2] = pulse_program[0][4]
-            if pulse_program[-3][0] > 8: #TO MAKE FPGA NOT DOUBLE TRIGGER
-                pulse_program[-3][0] += -8
-            self.logger.info([len(pulse_program), pulse_program])
-            #self.logger.info(self.programming_scheme)
             
             #Let's get the final state of the pulseblaster. z's are the args we don't need:
-            flags,z,z,z,z,z,z,z,z,z,z = pulse_program[-1]
+            flags,z,z,z = pulse_program[-1]
             
             if fresh or (self.smart_cache['initial_values'] != initial_values) or \
                 (len(self.smart_cache['pulse_program']) != len(pulse_program)) or \
@@ -446,8 +378,7 @@ class PulseblasterNoDDSWorker(Worker):
                 (self.smart_cache['pulse_program'] != pulse_program).any():
                     self.smart_cache['pulse_program'] = pulse_program
                     for args in pulse_program:
-                        #self.logger.info(args)
-                        pb_inst_pbonly(args[0], args[1], args[2],args[3])
+                        pb_inst_pbonly(*args)
                         
                 if self.programming_scheme == 'pb_start/BRANCH':
                     # We will be triggered by pb_start() if we are are the master pseudoclock or a single hardware trigger
@@ -484,6 +415,7 @@ class PulseblasterNoDDSWorker(Worker):
             return_flags = str(bin(flags)[2:]).rjust(self.num_DO,'0')[::-1]
             for i in range(self.num_DO):
                 return_values['flag %d'%i] = return_flags[i]
+                
             return return_values
             
     def check_status(self):
@@ -542,7 +474,7 @@ class PulseblasterNoDDSWorker(Worker):
         pass
         
 @runviewer_parser
-class PulseBlaster_No_DDS_Parser(PulseBlasterParser):
-    num_dds = 0
+class PulseBlaster_No_DDSA_Parser(PulseBlasterParser):
+    num_DDSA = 0
     num_flags = 24
 

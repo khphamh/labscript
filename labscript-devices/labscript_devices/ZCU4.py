@@ -59,6 +59,27 @@ class ZCU4DDS(DDSQuantity):
     def add_pulse(self, channel, style, start_time, length, gain, frequency, phase = 0, mode = 'oneshot', outsel = 'product', function_type = '[]'):
         self.pulse_sequence_list.append([channel, style, start_time, length, gain, frequency, phase, mode , outsel, function_type])
 
+class ZCU4TTL(DDSQuantity):
+    description = 'ZCU4TTL'
+    def __init__(self, *args, **kwargs):
+        if 'call_parents_add_device' in kwargs:
+            call_parents_add_device = kwargs['call_parents_add_device']
+        else:
+            call_parents_add_device = True
+
+        kwargs['call_parents_add_device'] = False
+        DDSQuantity.__init__(self, *args, **kwargs)
+
+        self.gate = DigitalQuantity(self.name + '_gate', self, 'gate')
+        self.phase_reset = DigitalQuantity(self.name + '_phase_reset', self, 'phase_reset')
+
+        if call_parents_add_device:
+            self.parent_device.add_device(self)
+
+        self.sequence_list = [] # [[6, 'const', 0, 100, 30000, 100, 0, 'oneshot', 'product', '[]']] #const = 0, arb = 1. oneshot = 0, periodic = 1. product  = 0, table = 1
+
+    def add_TTL(self, channel, start_time, end_time):
+        self.sequence_list.append((channel, int((start_time)*(10**9)), int((end_time)*(10**9))))
 
 profiles = {}
 def profile(funct):
@@ -103,15 +124,6 @@ def stop_profile(name):
 
 
 class ZCU4(PseudoclockDevice):
-    pb_instructions = {'CONTINUE':   0,
-                       'STOP':       1, 
-                       'LOOP':       2, 
-                       'END_LOOP':   3,
-                       'BRANCH':     6,
-                       'LONG_DELAY': 7,
-                       'WAIT':       8}
-
-                       
     description = 'PB-DDSII-300'
     clock_limit = 8.3e6 # Slight underestimate I think.
     clock_resolution = 2.6e-9
@@ -168,211 +180,9 @@ class ZCU4(PseudoclockDevice):
             raise LabscriptError('You have connected %s directly to %s, which is not allowed. You should instead specify the parent_device of %s as %s.direct_outputs'%(device.name, self.name, device.name, self.name))
         else:
             raise LabscriptError('You have connected %s (class %s) to %s, but %s does not support children with that class.'%(device.name, device.__class__, self.name, self.name))
-
-    def flag_valid(self, flag):
-        if -1 < flag < self.n_flags:
-            return True
-        return False     
         
-    def flag_is_clock(self, flag):
-        for clock_line in self.pseudoclock.child_devices:
-            if clock_line.connection == 'internal': #ignore internal clockline
-                continue
-            if flag == self.get_flag_number(clock_line.connection):
-                return True
-        return False
-            
-    def get_flag_number(self, connection):
-        # TODO: Error checking
-        prefix, connection = connection.split()
-        return int(connection)
+    def write_pb_inst_to_h5(self,  DDS, TTL, hdf5_file):
 
-
-    def get_direct_outputs(self):
-        """Finds out which outputs are directly attached to the ZCU4"""
-        dig_outputs = []
-        for output in self.direct_outputs.get_all_outputs():
-
-            # only check DDS and DigitalOuts (so ignore the children of the DDS)
-            if isinstance(output, DigitalOut):
-                # get connection number and prefix
-                try:
-                    prefix, connection = output.connection.split()
-                    assert prefix == 'flag'
-                    connection = int(connection)
-                except:
-                    raise LabscriptError('%s %s has invalid connection string: \'%s\'. '%(output.description,output.name,str(output.connection)) + 
-                                         'Format must be \'flag n\' with n an integer less than %d, or \'dds n\' with n less than 2.'%self.n_flags)
-                # run checks on the connection string to make sure it is valid
-                # TODO: Most of this should be done in add_device() No?
-                if prefix == 'flag' and not self.flag_valid(connection):
-                    raise LabscriptError('%s is set as connected to flag %d of %s. '%(output.name, connection, self.name) +
-                                         'Output flag number must be a integer from 0 to %d.'%(self.n_flags-1))
-                if prefix == 'flag' and self.flag_is_clock(connection):
-                    raise LabscriptError('%s is set as connected to flag %d of %s.'%(output.name, connection, self.name) +
-                                         ' This flag is already in use as one of the ZCU4\'s clock flags.')                         
-
-                # Check that the connection string doesn't conflict with another output
-                for other_output in dig_outputs:
-                    if output.connection == other_output.connection:
-                        raise LabscriptError('%s and %s are both set as connected to %s of %s.'%(output.name, other_output.name, output.connection, self.name))
-                
-                # store a reference to the output
-                if isinstance(output, DigitalOut):
-                    dig_outputs.append(output)
-            if isinstance(output, ZCU4DDS):
-                raise LabscriptError(output)
-
-        return dig_outputs
-        
-    def convert_to_pb_inst(self, dig_outputs):
-        pb_inst = []
-        
-        # index to keep track of where in output.raw_output the
-        # ZCU4 flags are coming from
-        # starts at -1 because the internal flag should always tick on the first instruction and be 
-        # incremented (to 0) before it is used to index any arrays
-        i = -1 
-        # index to record what line number of the ZCU4 hardware
-        # instructions we're up to:
-        j = 0
-        # We've delegated the initial two instructions off to BLACS, which
-        # can ensure continuity with the state of the front panel. Thus
-        # these two instructions don't actually do anything:
-        flags = [0]*self.n_flags
-        dds_enables = [0]*2
-        
-        pb_inst.append({'time':0, 'enables':dds_enables,
-                        'flags': ''.join([str(flag) for flag in flags]), 'instruction':'STOP',
-                        'data': 0, 'delay': 10.0/self.clock_limit*1e9})
-        pb_inst.append({'time': 0, 'enables':dds_enables,
-                        'flags': ''.join([str(flag) for flag in flags]),'instruction':'STOP',
-                        'data': 0, 'delay': 10.0/self.clock_limit*1e9})
-        j += 2
-        
-        flagstring = '0'*self.n_flags # So that this variable is still defined if the for loop has no iterations
-        #wanted_instruction_list = []
-        flag_list = []
-        for k, instruction in enumerate(self.pseudoclock.clock):
-            #wanted_instruction_list.append(instruction)
-                
-            flags = [0]*self.n_flags
-            # The registers below are ones, not zeros, so that we don't
-            # use the BLACS-inserted initial instructions. Instead
-            # unused DDSs have a 'zero' in register one for freq, amp
-            # and phase.
-            dds_enables = [0]*2
-
-            # This flag indicates whether we need a full clock tick, or are just updating an internal output
-            only_internal = True
-            # find out which clock flags are ticking during this instruction
-            for clock_line in instruction['enabled_clocks']:
-                if clock_line == self._direct_output_clock_line: 
-                    # advance i (the index keeping track of internal clockline output)
-                    i += 1
-                else:
-                    flag_index = int(clock_line.connection.split()[1])
-                    flags[flag_index] = 1
-                    # We are not just using the internal clock line
-                    only_internal = False
-            
-            for output in dig_outputs:
-
-                flagindex = int(output.connection.split()[1])
-                flags[flagindex] = int(output.raw_output[i])
-                #flag_list.append(flags[flagindex])
-                
-            flagstring = ''.join([str(flag) for flag in flags])
-            
-            if not only_internal:
-                high_time = instruction['step']/2
-                high_time = min(high_time, self.long_delay)
-
-                # Low time is whatever is left:
-                low_time = instruction['step'] - high_time
-
-                # Do we need to insert a LONG_DELAY instruction to create a delay this
-                # long?
-                n_long_delays, remaining_low_time =  divmod(low_time, self.long_delay)
-
-                # If the remainder is too short to be output, add self.long_delay to it.
-                # self.long_delay was constructed such that adding self.min_delay to it
-                # is still not too long for a single instruction:
-                if n_long_delays and remaining_low_time < self.min_delay:
-                    n_long_delays -= 1
-                    remaining_low_time += self.long_delay
-
-                # The start loop instruction, Clock edges are high:
-                pb_inst.append({'time': instruction['start'], 'enables':dds_enables,
-                                'flags': flagstring, 'instruction': 'LOOP',
-                                'data': instruction['reps'], 'delay': high_time*1e9})
-                
-                for clock_line in instruction['enabled_clocks']:
-                    if clock_line != self._direct_output_clock_line:
-                        flag_index = int(clock_line.connection.split()[1])
-                        flags[flag_index] = 0
-                        
-                flagstring = ''.join([str(flag) for flag in flags])
-            
-                # The long delay instruction, if any. Clock edges are low: 
-                if n_long_delays:
-                    pb_inst.append({'time': instruction['start'], 'enables':dds_enables,
-                                'flags': flagstring, 'instruction': 'LONG_DELAY',
-                                'data': int(n_long_delays), 'delay': self.long_delay*1e9})
-                                
-                # Remaining low time. Clock edges are low:
-                pb_inst.append({'time': instruction['start'], 'enables':dds_enables, 
-                                'flags': flagstring, 'instruction': 'END_LOOP',
-                                'data': j, 'delay': remaining_low_time*1e9})
-                                
-                # Two instructions were used in the case of there being no LONG_DELAY, 
-                # otherwise three. This increment is done here so that the j referred
-                # to in the previous line still refers to the LOOP instruction.
-                j += 3 if n_long_delays else 2
-            else:
-                # We only need to update a direct output, so no need to tick the clocks.
-
-                # Do we need to insert a LONG_DELAY instruction to create a delay this
-                # long?
-                n_long_delays, remaining_delay =  divmod(instruction['step'], self.long_delay)
-                # If the remainder is too short to be output, add self.long_delay to it.
-                # self.long_delay was constructed such that adding self.min_delay to it
-                # is still not too long for a single instruction:
-                if n_long_delays and remaining_delay < self.min_delay:
-                    n_long_delays -= 1
-                    remaining_delay += self.long_delay
-                
-                if n_long_delays:
-                    pb_inst.append({'time': instruction['start'], 'enables':dds_enables,
-                                'flags': flagstring, 'instruction': 'LONG_DELAY',
-                                'data': int(n_long_delays), 'delay': self.long_delay*1e9})
-
-                pb_inst.append({'time': instruction['start'], 'enables':dds_enables,
-                                'flags': flagstring, 'instruction': 'CONTINUE',
-                                'data': 0, 'delay': remaining_delay*1e9})
-                
-                j += 2 if n_long_delays else 1
-                
-        return pb_inst
-        
-    def write_pb_inst_to_h5(self, pb_inst, DDS, hdf5_file):
-        # OK now we squeeze the instructions into a numpy array ready for writing to hdf5:
-        pb_dtype = [('time', np.float32),('dds_en0', np.int32),('dds_en1', np.int32), 
-                    ('flags', np.int32), ('inst', np.int32),
-                    ('inst_data', np.int32), ('length', np.float64)]
-        pb_inst_table = np.empty(len(pb_inst),dtype = pb_dtype)
-        for i,inst in enumerate(pb_inst):
-            timeint = (inst['time'])
-            flagint = int(inst['flags'][::-1],2)
-            instructionint = self.pb_instructions[inst['instruction']]
-            dataint = inst['data']
-            delaydouble = inst['delay']
-            en0 = inst['enables'][0]
-            en1 = inst['enables'][1]
-            
-            pb_inst_table[i] = (timeint, en0,en1, flagint, 
-                                instructionint, dataint, delaydouble)     
-        # Okay now write it to the file: 
         DDS_dtype = [('channel', float),('style', str),('start_time', float), 
             ('length', float), ('gain', float),
             ('frequency', float), ('phase', float), ('mode', str), ('outsel', str), ('function_type', str)]
@@ -382,9 +192,9 @@ class ZCU4(PseudoclockDevice):
                 j[k] = str(j[k])
             DDS_table[i] = (j[0], j[1],j[2],j[3], j[4], j[5], j[6], j[7], j[8], j[9])
         group = hdf5_file['/devices/'+self.name]  
-        group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = pb_inst_table)  
         dt = h5py.string_dtype(encoding='utf-8') 
         group.create_dataset('DDS', compression=config.compression,data = DDS, dtype=dt)
+        group.create_dataset('TTL', compression=config.compression,data = TTL)
         #raise LabscriptError(str(group['PULSE_PROGRAM'][2:][0][3]))
         self.set_property('stop_time', self.stop_time, location='device_properties')
 
@@ -407,16 +217,14 @@ class ZCU4(PseudoclockDevice):
         # Generate the hardware instructions
         hdf5_file.create_group('/devices/' + self.name)
         PseudoclockDevice.generate_code(self, hdf5_file)
-        dig_outputs = self.get_direct_outputs()
-        pb_inst = self.convert_to_pb_inst(dig_outputs)
-        DDS_set = self.direct_outputs.get_all_outputs()[5].__dict__['parent_device'].__dict__['pulse_sequence_list']
-
+        DDS_set = self.direct_outputs.get_all_outputs()[4].__dict__['parent_device'].__dict__['pulse_sequence_list']
+        TTL_set = self.direct_outputs.get_all_outputs()[5].__dict__['parent_device'].__dict__['sequence_list']
         self._check_wait_monitor_ok()
-        self.write_pb_inst_to_h5(pb_inst, DDS_set, hdf5_file)
+        self.write_pb_inst_to_h5( DDS_set, TTL_set, hdf5_file)
 
 
 class ZCU4DirectOutputs(IntermediateDevice):
-    allowed_children = [DDS, ZCU4DDS, DigitalOut]
+    allowed_children = [DDS, ZCU4DDS, ZCU4TTL, DigitalOut]
     clock_limit = ZCU4.clock_limit
     description = 'PB-DDSII-300 Direct Outputs'
 
@@ -686,31 +494,36 @@ class ZCU4Worker(Worker):
         self.h5file = h5file
         self.started = False
         self.sequence_list = []
+        self.pulse_list = []
 
         with h5py.File(h5file,'r') as hdf5_file:
             group = hdf5_file['devices/%s'%device_name]
 
-            pulse_program = group['PULSE_PROGRAM'][2:]
             DDS = group['DDS']
-            #raise LabscriptError(str(pulse_program))
+            TTL = group['TTL']
+            '''self.logger.info([group['PULSE_PROGRAM'][0:]])
             for i in range(len(pulse_program)-1):
                 start_time = int((pulse_program[i][0])*(10**9))
                 end_time = int((pulse_program[i+1][0])*(10**9))
                 channels = pulse_program[i][3]
+                self.logger.info([start_time, end_time, channels])
                 for j, k in enumerate(reversed(bin(channels))):
                     if k == '1':
                         if start_time != end_time:
                             self.sequence_list.append((j, start_time, end_time))
-                        elif abs(start_time - end_time) < 1:
-                            self.sequence_list.append((j, start_time, end_time+1000))
+                        #elif abs(start_time - end_time) < 1:
+                            #self.sequence_list.append((j, start_time, end_time+1000))
                     elif k == 'b':
-                        break
+                        break'''
             #raise LabscriptError(self.sequence_list)
             #self.logger.info(pulse_program)
             self.logger.info(self.sequence_list)
             for i in range(len(DDS)):
                 self.pulse_list.append([int(DDS[i][0].decode()), DDS[i][1].decode(), int(float(DDS[i][2].decode())*(10**9)), int(DDS[i][3].decode()),int(DDS[i][4].decode()),int(DDS[i][5].decode()),int(DDS[i][6].decode()),DDS[i][7].decode(),DDS[i][8].decode(),DDS[i][9].decode()    ]   )
             self.logger.info(self.pulse_list)
+            for i in range(len(TTL)):
+                self.sequence_list.append( (int(TTL[i][0]), int(TTL[i][1]), int(TTL[i][2] )))  
+            self.logger.info(self.sequence_list)
             '''
             pulse_list_string = "pulse_list = " + str(pulse_list) + "\r\n"
             ZCU4ser.write(pulse_list_string.encode())
@@ -724,10 +537,9 @@ class ZCU4Worker(Worker):
             ZCU4ser.write(b"exec(open('send_pulse.py').read())\r\n")
             time.sleep(1)
             '''
-
             return_values = {}
             # Since we are converting from an integer to a binary string, we need to reverse the string! (see notes above when we create flags variables)
-            return_channels = pulse_program[-1][3]
+            return_channels = 8
 
             return_flags = reversed(bin(return_channels))
             for j, k  in enumerate(reversed(bin(return_channels))):
