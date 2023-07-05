@@ -794,19 +794,19 @@ def make_run_file_from_globals_files(labscript_file, globals_files, output_path,
     sequence_globals = get_globals(groups)
     evaled_globals, global_hierarchy, expansions = evaluate_globals(sequence_globals)
     shots = expand_globals(sequence_globals, evaled_globals)
+    #print(shots)
     if len(shots) > 1:
         scanning_globals = []
         for global_name in expansions:
             if expansions[global_name]:
                 scanning_globals.append(global_name)
-        raise ValueError('Cannot compile to a single run file: The following globals are a sequence: ' +
-                         ', '.join(scanning_globals))
+        #raise ValueError('Cannot compile to a single run file: The following globals are a sequence: ' +', '.join(scanning_globals))
 
     sequence_attrs, _, _ = new_sequence_details(
         labscript_file, config=config, increment_sequence_index=True
     )
     make_single_run_file(output_path, sequence_globals, shots[0], sequence_attrs, 1, 1)
-
+    #make_single_run_file(output_path, sequence_globals, shots[1], sequence_attrs, 1, 1)
 
 def compile_labscript(labscript_file, run_file):
     """Compiles labscript_file with the run file, returning
