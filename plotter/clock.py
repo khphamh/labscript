@@ -20,6 +20,8 @@ from matplotlib import style
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageGrab
+import h5py
+import pickle 
 
 
 LARGE_FONT= ("Verdana", 12)
@@ -28,26 +30,63 @@ style.use("ggplot")
 f = Figure(figsize=(5,5), dpi=100)
 f_2 = Figure(figsize=(5,5), dpi=100)
 
-a = f.add_subplot(111)
+a = f.add_subplot(121)
+a_2 = f.add_subplot(122)
 b = f_2.add_subplot(111)
 b.axis('equal')
 div = make_axes_locatable(b)
 cax = div.append_axes('right', '5%', '5%')
 b.set_facecolor('white')
 a.set_facecolor('white')
+a_2.set_facecolor('white')
+
 for word in ['left', 'right', 'top', 'bottom']:
     b.spines[word].set_color('black')
     a.spines[word].set_color('black')
+    a_2.spines[word].set_color('black')
+
 b.tick_params(axis='x', colors='black')    #setting up X-axis tick color to red
 b.tick_params(axis='y', colors='black')    #setting up X-axis tick color to red
 a.tick_params(axis='x', colors='black')    #setting up X-axis tick color to red
 a.tick_params(axis='y', colors='black')    #setting up X-axis tick color to red
-
+a_2.tick_params(axis='x', colors='black')    #setting up X-axis tick color to red
+a_2.tick_params(axis='y', colors='black')    #setting up X-axis tick color to red
 
 def animate(i):
-    yList = np.loadtxt('analysis_data.txt')
-    a.clear()
-    a.plot(yList)
+    with open('C:/Users/Yao Lab/labscript-suite/plotter/plot_parameters.txt', 'rb') as f:
+        loaded_dict = pickle.load(f)
+    try:
+        x_values = np.loadtxt('C:/Users/Yao Lab/labscript-suite/plotter/x_values.txt')
+        yList = np.loadtxt('C:/Users/Yao Lab/labscript-suite/plotter/analysis_data.txt')
+        yList_2 = np.loadtxt('C:/Users/Yao Lab/labscript-suite/plotter/analysis_data_2.txt')
+
+        #print(yList)
+        a.clear()
+        a_2.clear()
+        a.set_title(loaded_dict['titles'][0])
+        a.set_xlabel(loaded_dict['xlabels'][0])
+        a.set_ylabel(loaded_dict['ylabels'][0])
+
+
+        if len(np.shape(yList)) > 1:
+            for i in range(len(np.shape(yList))):
+                #a.plot(x_values, yList[i])
+
+                a.plot(x_values, yList[i], marker = '.', label = loaded_dict['labels'][0].strip().strip('][').split(',')[i], )
+            a_2.set_title(loaded_dict['titles'][1])
+            a_2.set_xlabel(loaded_dict['xlabels'][1])
+            a_2.set_ylabel(loaded_dict['ylabels'][1])
+            a_2.plot(x_values, yList_2, '.')
+            a_2.plot(x_values, yList_2, '-')
+
+            a.legend()
+        else:
+            a.plot(x_values,yList)
+            #print(yList[i])
+        #a.plot(plot_parameters, yList)
+    except:
+        print("failed")
+        pass
 
 class Data_Analysis(tk.Tk):
 
@@ -276,18 +315,51 @@ class PageTwo(tk.Frame):
         self.V_y_text.delete(0, tk.END)
 
         self.V_x_text.insert(tk.END, str(self.x_cursor))
-        self.V_y_text.insert(tk.END, str(self.x_cursor))
+        self.V_y_text.insert(tk.END, str(self.y_cursor))
+        np.savetxt('laser_location.txt', np.array([self.x_cursor, self.y_cursor]))
+
+    def calculate_newest(self):
+        directory = 'C:/Users/Yao Lab/labscript-suite/Experiments/example_apparatus/Scan'
+
+        newest_path = min([os.path.join(directory,d) for d in os.listdir(directory)], key=os.path.getmtime)
+        for i in range(3):
+            newest_path = max([os.path.join(newest_path,d) for d in os.listdir(newest_path)], key=os.path.getmtime)
+        for file_a in os.listdir(newest_path):
+            if file_a[-2:] != 'h5': #speed this up by placing all txt files in a separate location
+                data_path = newest_path + '\\' + file_a
+            else:
+                h5_path = newest_path + '\\' + file_a
+        data = np.loadtxt(data_path)
+        self.n = int( (len(data))**0.5 )
+        #print(len(data))
+        data = np.reshape(data, (self.n,self.n))
+        data[1::2, :] = data[1::2, ::-1]
+        data = np.rot90(data, 1)
+        np.savetxt('colorplot.txt', data)
+        with h5py.File(h5_path,'r') as hdf5_file:
+            parameters = hdf5_file['globals/raster_parameters']
+            self.b_x_min = np.float64(parameters.attrs['V_x_min'])
+            self.b_x_max = np.float64(parameters.attrs['V_x_max'])
+            self.b_x_offset = np.float64(parameters.attrs['V_x_offset'])
+            self.b_y_min = np.float64(parameters.attrs['V_y_min'])
+            self.b_y_max = np.float64(parameters.attrs['V_y_max'])
+            self.b_y_offset = np.float64(parameters.attrs['V_y_offset'])
 
     def plot_newest(self):
         print("Plotting Newest Image")
+        self.calculate_newest()
         arr = np.loadtxt('colorplot.txt')
         vmax     = np.max(arr)
         vmin     = np.min(arr)
         levels   = np.linspace(vmin, vmax, 200, endpoint = True)
-        cf = b.contourf(arr, levels=levels)
+        V_x_units = self.b_x_offset + np.linspace(self.b_x_min, self.b_x_max, self.n)
+        V_y_units = self.b_y_offset + np.linspace(self.b_y_min, self.b_y_max, self.n)
+        V_x_mesh, V_y_mesh = np.meshgrid(V_x_units, V_y_units)
+        #print(V_x_units)
+        cf = b.contourf(V_x_mesh, V_y_mesh, arr)
         cax.cla()
-        b.set_xlim([0, len(arr[0])-1])
-        b.set_ylim([0, len(arr[0])-1])
+        #b.set_xlim([self.b_x_min, self.b_x_max])
+        #b.set_ylim([self.b_y_min, self.b_y_max])
         f_2.colorbar(cf, cax=cax)
         self.canvas.draw()
 
@@ -332,10 +404,12 @@ class PageTwo(tk.Frame):
 
     def CPS_updater(self):
         if not self.cancel:
-            num_string = np.loadtxt('rand_num.txt')
+            np.savetxt('C:/Users/Yao Lab/labscript-suite/plotter/CPS_status.txt', np.array([1]))
+            num_string = np.loadtxt('CPS.txt')
             self.CPS_label.config(text=num_string)
             self.CPS_ID = self.CPS_label.after(1000, self.CPS_updater)
         else:
+            np.savetxt('C:/Users/Yao Lab/labscript-suite/plotter/CPS_status.txt', np.array([0]))
             self.CPS_ID = self.CPS_label.after_cancel(self.CPS_updater)
 
         #else:
@@ -372,7 +446,7 @@ class PageThree(tk.Frame):
 
 
     def loadfile(self):
-        self.loaded_file = tk.filedialog.askopenfilename()
+        self.loaded_file = tk.filedialog.askopenfilename(initialdir='C:/Users/Yao Lab/labscript-suite/plotter/analysis')
         '''for proc in psutil.process_iter():
             try:
                 # Get process name & pid from process object.
@@ -400,7 +474,7 @@ class PageThree(tk.Frame):
 app = Data_Analysis()
 #app.geometry("1280x720")
 
-ani = animation.FuncAnimation(f, animate, interval=5000)
+ani = animation.FuncAnimation(f, animate, interval=1000)
 
 #ani = animation.FuncAnimation(f_2, animate, interval=1000)
 
