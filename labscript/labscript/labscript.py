@@ -2583,8 +2583,8 @@ class CounterIn(Device):
         self.acquisitions.append({'start_time': start_time, 'end_time': end_time, 'sample_freq': sample_freq,
                                  'label': label, 'wait_label':wait_label})
         return end_time - start_time
-    def fast_counter(self, sample_freq):
-        self.acquisitions.append({ 'sample_freq': sample_freq})
+    def fast_counter(self, sample_freq, num_called, save_method):
+        self.acquisitions.append({ 'sample_freq': sample_freq, 'num_called': num_called,'save_method': save_method})
         return 0
 
 
